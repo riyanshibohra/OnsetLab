@@ -150,7 +150,7 @@ When you need to use a tool, respond with EXACTLY this format:
 
 Rules:
 - Always use the exact tool names listed above
-- Use ISO format for dates: "2026-01-15T10:00:00"
+- Use ISO format for dates/times when needed
 - Be helpful and concise"""
 
         self.system_prompt = prompt
@@ -166,7 +166,6 @@ Rules:
             "year": today.year,
             "month": today.strftime("%B"),
             "day_of_week": today.strftime("%A"),
-            "random_hour": random.choice(["09:00", "10:00", "11:00", "14:00", "15:00", "16:00"]),
         }
     
     def _generate_queries_for_tool(self, tool: ToolSchema, count: int) -> list[dict]:
@@ -192,6 +191,13 @@ CRITICAL RULES:
 3. NEVER use placeholders like {{date}}, <TODAY>, or [NAME]
 4. Include realistic names, times, and details
 5. Vary the complexity (simple vs detailed requests)
+
+PARAMETER GUIDELINES:
+- Study the parameter descriptions and use realistic, sensible default values
+- For ID parameters: Use realistic alphanumeric IDs like "abc123", "item_001" - these represent IDs from previous operations
+- For dates/times: Always use ISO format. Be precise with the dates based on today being {date_ctx['today']}
+- For optional params: Include them in ~50% of examples to show variety
+- Match the expected types from the schema (string, number, boolean, etc.)
 
 For each query, also provide the correct tool call.
 
