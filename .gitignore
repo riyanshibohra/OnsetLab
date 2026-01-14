@@ -8,3 +8,5 @@ _reference
 
 
 onsetlab/data_generation/example_tools.json
+onsetlab/data_generation/system_prompt.txt
+onsetlab/data_generation/test_output_v2.jsonl
