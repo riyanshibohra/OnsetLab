@@ -1,0 +1,1464 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "last_updated": "2026-01-15",
+    "description": "Verified MCP server tool schemas for OnsetLab training data generation"
+  },
+  
+  "slack-mcp-server": {
+    "npm_package": "slack-mcp-server",
+    "github": "korotovsky/slack-mcp-server",
+    "description": "Slack workspace access - messages, channels, search",
+    "auth": {
+      "type": "env_token",
+      "required": ["SLACK_MCP_XOXP_TOKEN"],
+      "optional": ["SLACK_MCP_XOXB_TOKEN", "SLACK_MCP_XOXC_TOKEN", "SLACK_MCP_XOXD_TOKEN"],
+      "instructions": "Get token from Slack API: https://api.slack.com/apps"
+    },
+    "tools": [
+      {
+        "name": "conversations_history",
+        "description": "Get messages from a channel or DM by channel_id",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "channel_id": {
+              "type": "string",
+              "description": "ID of the channel (Cxxxxxxxxxx) or name (#general, @username)"
+            },
+            "include_activity_messages": {
+              "type": "boolean",
+              "description": "Include join/leave messages",
+              "default": false
+            },
+            "cursor": {
+              "type": "string",
+              "description": "Pagination cursor from previous response"
+            }
+          },
+          "required": ["channel_id"]
+        }
+      },
+      {
+        "name": "conversations_replies",
+        "description": "Get thread replies for a message",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "channel_id": {
+              "type": "string",
+              "description": "ID of the channel"
+            },
+            "thread_ts": {
+              "type": "string",
+              "description": "Timestamp of parent message (1234567890.123456)"
+            },
+            "include_activity_messages": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "required": ["channel_id", "thread_ts"]
+        }
+      },
+      {
+        "name": "conversations_add_message",
+        "description": "Send a message to a channel or DM",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "channel_id": {
+              "type": "string",
+              "description": "ID of the channel to post to"
+            },
+            "text": {
+              "type": "string",
+              "description": "Message text to send"
+            },
+            "thread_ts": {
+              "type": "string",
+              "description": "Reply to a thread (optional)"
+            }
+          },
+          "required": ["channel_id", "text"]
+        }
+      },
+      {
+        "name": "conversations_search_messages",
+        "description": "Search messages across channels",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "search_query": {
+              "type": "string",
+              "description": "Search query or Slack message URL"
+            },
+            "channel_id": {
+              "type": "string",
+              "description": "Filter to specific channel"
+            },
+            "from_user": {
+              "type": "string",
+              "description": "Filter by sender username"
+            }
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "channels_list",
+        "description": "Get list of channels in workspace",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "channel_types": {
+              "type": "string",
+              "description": "Comma-separated: public_channel,private_channel,im,mpim"
+            },
+            "sort": {
+              "type": "string",
+              "description": "Sort by: popularity"
+            },
+            "limit": {
+              "type": "number",
+              "description": "Max items (1-1000)",
+              "default": 100
+            }
+          },
+          "required": ["channel_types"]
+        }
+      }
+    ]
+  },
+
+  "@modelcontextprotocol/server-filesystem": {
+    "npm_package": "@modelcontextprotocol/server-filesystem",
+    "github": "modelcontextprotocol/servers",
+    "description": "Local filesystem operations - read, write, search files",
+    "auth": {
+      "type": "none",
+      "instructions": "No auth required. Pass allowed directories as arguments."
+    },
+    "tools": [
+      {
+        "name": "read_file",
+        "description": "Read complete contents of a file",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path to the file"},
+            "head": {"type": "number", "description": "Return only first N lines"},
+            "tail": {"type": "number", "description": "Return only last N lines"}
+          },
+          "required": ["path"]
+        }
+      },
+      {
+        "name": "read_multiple_files",
+        "description": "Read multiple files at once",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paths": {
+              "type": "array",
+              "items": {"type": "string"},
+              "description": "Array of file paths"
+            }
+          },
+          "required": ["paths"]
+        }
+      },
+      {
+        "name": "write_file",
+        "description": "Create or overwrite a file",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Path for the file"},
+            "content": {"type": "string", "description": "Content to write"}
+          },
+          "required": ["path", "content"]
+        }
+      },
+      {
+        "name": "edit_file",
+        "description": "Make line-based edits to a file",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "edits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "oldText": {"type": "string"},
+                  "newText": {"type": "string"}
+                }
+              }
+            },
+            "dryRun": {"type": "boolean", "default": false}
+          },
+          "required": ["path", "edits"]
+        }
+      },
+      {
+        "name": "create_directory",
+        "description": "Create a new directory",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Directory path to create"}
+          },
+          "required": ["path"]
+        }
+      },
+      {
+        "name": "list_directory",
+        "description": "List files and directories in a path",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Directory to list"}
+          },
+          "required": ["path"]
+        }
+      },
+      {
+        "name": "directory_tree",
+        "description": "Get recursive tree view of directory",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "excludePatterns": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["path"]
+        }
+      },
+      {
+        "name": "move_file",
+        "description": "Move or rename a file",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "source": {"type": "string"},
+            "destination": {"type": "string"}
+          },
+          "required": ["source", "destination"]
+        }
+      },
+      {
+        "name": "search_files",
+        "description": "Search for files matching a pattern",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Directory to search"},
+            "pattern": {"type": "string", "description": "Glob pattern (*.txt, **/*.js)"},
+            "excludePatterns": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["path", "pattern"]
+        }
+      },
+      {
+        "name": "get_file_info",
+        "description": "Get file metadata (size, dates, permissions)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"}
+          },
+          "required": ["path"]
+        }
+      }
+    ]
+  },
+
+  "github-mcp": {
+    "npm_package": "github-mcp",
+    "github": "Seey215/github-mcp",
+    "description": "GitHub repository management - issues, PRs, files",
+    "auth": {
+      "type": "env_token",
+      "required": ["GITHUB_TOKEN"],
+      "instructions": "Create at: https://github.com/settings/tokens"
+    },
+    "tools": [
+      {
+        "name": "list_issues",
+        "description": "List issues in a repository",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "owner": {"type": "string", "description": "Repository owner"},
+            "repo": {"type": "string", "description": "Repository name"},
+            "state": {"type": "string", "enum": ["open", "closed", "all"], "default": "open"},
+            "labels": {"type": "string", "description": "Comma-separated labels"},
+            "per_page": {"type": "number", "default": 30}
+          },
+          "required": ["owner", "repo"]
+        }
+      },
+      {
+        "name": "get_issue",
+        "description": "Get a specific issue by number",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "owner": {"type": "string"},
+            "repo": {"type": "string"},
+            "issue_number": {"type": "number"}
+          },
+          "required": ["owner", "repo", "issue_number"]
+        }
+      },
+      {
+        "name": "create_issue",
+        "description": "Create a new issue",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "owner": {"type": "string"},
+            "repo": {"type": "string"},
+            "title": {"type": "string"},
+            "body": {"type": "string"},
+            "labels": {"type": "array", "items": {"type": "string"}},
+            "assignees": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["owner", "repo", "title"]
+        }
+      },
+      {
+        "name": "update_issue",
+        "description": "Update an existing issue",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "owner": {"type": "string"},
+            "repo": {"type": "string"},
+            "issue_number": {"type": "number"},
+            "title": {"type": "string"},
+            "body": {"type": "string"},
+            "state": {"type": "string", "enum": ["open", "closed"]}
+          },
+          "required": ["owner", "repo", "issue_number"]
+        }
+      },
+      {
+        "name": "list_pull_requests",
+        "description": "List pull requests in a repository",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "owner": {"type": "string"},
+            "repo": {"type": "string"},
+            "state": {"type": "string", "enum": ["open", "closed", "all"]},
+            "base": {"type": "string", "description": "Filter by base branch"}
+          },
+          "required": ["owner", "repo"]
+        }
+      },
+      {
+        "name": "get_file_contents",
+        "description": "Get contents of a file from repository",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "owner": {"type": "string"},
+            "repo": {"type": "string"},
+            "path": {"type": "string"},
+            "ref": {"type": "string", "description": "Branch/tag/commit"}
+          },
+          "required": ["owner", "repo", "path"]
+        }
+      },
+      {
+        "name": "search_repositories",
+        "description": "Search for repositories",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string", "description": "Search query"},
+            "sort": {"type": "string", "enum": ["stars", "forks", "updated"]},
+            "per_page": {"type": "number", "default": 30}
+          },
+          "required": ["query"]
+        }
+      }
+    ]
+  },
+
+  "@cocal/google-calendar-mcp": {
+    "npm_package": "@cocal/google-calendar-mcp",
+    "github": "cocal-labs/google-calendar-mcp",
+    "description": "Google Calendar management - events, scheduling, freebusy",
+    "auth": {
+      "type": "oauth2",
+      "required": ["credentials.json"],
+      "instructions": "Create OAuth credentials at console.cloud.google.com, download credentials.json"
+    },
+    "tools": [
+      {
+        "name": "get-current-time",
+        "description": "Get the current date and time",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "timeZone": {"type": "string", "description": "IANA timezone (America/New_York)"}
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "list-calendars",
+        "description": "List all calendars the user has access to",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      },
+      {
+        "name": "list-events",
+        "description": "List events from a calendar",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "calendarId": {"type": "string", "description": "Calendar ID (use 'primary' for main)", "default": "primary"},
+            "timeMin": {"type": "string", "description": "Start time ISO8601 (2026-01-15T00:00:00)"},
+            "timeMax": {"type": "string", "description": "End time ISO8601"},
+            "maxResults": {"type": "number", "default": 10}
+          },
+          "required": ["calendarId"]
+        }
+      },
+      {
+        "name": "search-events",
+        "description": "Search events by text query",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "calendarId": {"type": "string", "default": "primary"},
+            "query": {"type": "string", "description": "Search text"}
+          },
+          "required": ["calendarId", "query"]
+        }
+      },
+      {
+        "name": "create-event",
+        "description": "Create a new calendar event",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "calendarId": {"type": "string", "default": "primary"},
+            "summary": {"type": "string", "description": "Event title"},
+            "start": {"type": "string", "description": "Start time ISO8601"},
+            "end": {"type": "string", "description": "End time ISO8601"},
+            "description": {"type": "string"},
+            "location": {"type": "string"},
+            "attendees": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["calendarId", "summary", "start", "end"]
+        }
+      },
+      {
+        "name": "update-event",
+        "description": "Update an existing event",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "calendarId": {"type": "string", "default": "primary"},
+            "eventId": {"type": "string", "description": "Event ID to update"},
+            "summary": {"type": "string"},
+            "start": {"type": "string"},
+            "end": {"type": "string"},
+            "description": {"type": "string"},
+            "location": {"type": "string"}
+          },
+          "required": ["calendarId", "eventId"]
+        }
+      },
+      {
+        "name": "delete-event",
+        "description": "Delete a calendar event",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "calendarId": {"type": "string", "default": "primary"},
+            "eventId": {"type": "string", "description": "Event ID to delete"}
+          },
+          "required": ["calendarId", "eventId"]
+        }
+      },
+      {
+        "name": "get-freebusy",
+        "description": "Check free/busy time for calendars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "timeMin": {"type": "string", "description": "Start of range ISO8601"},
+            "timeMax": {"type": "string", "description": "End of range ISO8601"},
+            "calendarIds": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["timeMin", "timeMax"]
+        }
+      }
+    ]
+  },
+
+  "notion-mcp": {
+    "npm_package": "@anthropic/notion-mcp",
+    "github": "anthropics/notion-mcp",
+    "description": "Notion workspace - pages, databases, content",
+    "auth": {
+      "type": "env_token",
+      "required": ["NOTION_API_KEY"],
+      "instructions": "Create integration at: https://www.notion.so/my-integrations"
+    },
+    "tools": [
+      {
+        "name": "search",
+        "description": "Search pages and databases in Notion",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string", "description": "Search query"},
+            "filter": {"type": "string", "enum": ["page", "database"]},
+            "page_size": {"type": "number", "default": 10}
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "get_page",
+        "description": "Get a Notion page by ID",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "page_id": {"type": "string", "description": "Notion page ID"}
+          },
+          "required": ["page_id"]
+        }
+      },
+      {
+        "name": "create_page",
+        "description": "Create a new page in a database",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "parent_database_id": {"type": "string"},
+            "title": {"type": "string"},
+            "properties": {"type": "object", "description": "Database properties"}
+          },
+          "required": ["parent_database_id", "title"]
+        }
+      },
+      {
+        "name": "update_page",
+        "description": "Update page properties",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "page_id": {"type": "string"},
+            "properties": {"type": "object"}
+          },
+          "required": ["page_id", "properties"]
+        }
+      },
+      {
+        "name": "query_database",
+        "description": "Query a Notion database",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "database_id": {"type": "string"},
+            "filter": {"type": "object", "description": "Filter conditions"},
+            "sorts": {"type": "array", "description": "Sort conditions"},
+            "page_size": {"type": "number", "default": 100}
+          },
+          "required": ["database_id"]
+        }
+      },
+      {
+        "name": "append_block_children",
+        "description": "Add content blocks to a page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "block_id": {"type": "string", "description": "Page or block ID"},
+            "children": {"type": "array", "description": "Block objects to add"}
+          },
+          "required": ["block_id", "children"]
+        }
+      }
+    ]
+  },
+
+  "playwright-mcp": {
+    "npm_package": "@anthropic/playwright-mcp",
+    "github": "anthropics/playwright-mcp",
+    "description": "Browser automation - navigate, click, fill forms, screenshots",
+    "auth": {
+      "type": "none",
+      "instructions": "No auth required. Runs browser locally."
+    },
+    "tools": [
+      {
+        "name": "navigate",
+        "description": "Navigate to a URL",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {"type": "string", "description": "URL to navigate to"}
+          },
+          "required": ["url"]
+        }
+      },
+      {
+        "name": "screenshot",
+        "description": "Take a screenshot of the current page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "fullPage": {"type": "boolean", "default": false},
+            "selector": {"type": "string", "description": "CSS selector for element screenshot"}
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "click",
+        "description": "Click on an element",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "selector": {"type": "string", "description": "CSS selector"}
+          },
+          "required": ["selector"]
+        }
+      },
+      {
+        "name": "fill",
+        "description": "Fill in a form field",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "selector": {"type": "string", "description": "CSS selector for input"},
+            "value": {"type": "string", "description": "Value to fill"}
+          },
+          "required": ["selector", "value"]
+        }
+      },
+      {
+        "name": "evaluate",
+        "description": "Execute JavaScript in the page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "script": {"type": "string", "description": "JavaScript code to run"}
+          },
+          "required": ["script"]
+        }
+      },
+      {
+        "name": "get_text",
+        "description": "Get text content of an element",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "selector": {"type": "string"}
+          },
+          "required": ["selector"]
+        }
+      },
+      {
+        "name": "wait_for_selector",
+        "description": "Wait for an element to appear",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "selector": {"type": "string"},
+            "timeout": {"type": "number", "default": 30000}
+          },
+          "required": ["selector"]
+        }
+      }
+    ]
+  },
+
+  "postgres-mcp": {
+    "npm_package": "@anthropic/postgres-mcp",
+    "github": "anthropics/postgres-mcp", 
+    "description": "PostgreSQL database - queries, schema inspection",
+    "auth": {
+      "type": "connection_string",
+      "required": ["DATABASE_URL"],
+      "instructions": "Format: postgresql://user:password@host:port/database"
+    },
+    "tools": [
+      {
+        "name": "query",
+        "description": "Execute a SQL query",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sql": {"type": "string", "description": "SQL query to execute"},
+            "params": {"type": "array", "description": "Query parameters"}
+          },
+          "required": ["sql"]
+        }
+      },
+      {
+        "name": "list_tables",
+        "description": "List all tables in the database",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "schema": {"type": "string", "default": "public"}
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "describe_table",
+        "description": "Get table schema/columns",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "table": {"type": "string", "description": "Table name"},
+            "schema": {"type": "string", "default": "public"}
+          },
+          "required": ["table"]
+        }
+      },
+      {
+        "name": "insert",
+        "description": "Insert a row into a table",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "table": {"type": "string"},
+            "data": {"type": "object", "description": "Column-value pairs"}
+          },
+          "required": ["table", "data"]
+        }
+      },
+      {
+        "name": "update",
+        "description": "Update rows in a table",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "table": {"type": "string"},
+            "data": {"type": "object"},
+            "where": {"type": "string", "description": "WHERE clause"}
+          },
+          "required": ["table", "data", "where"]
+        }
+      },
+      {
+        "name": "delete",
+        "description": "Delete rows from a table",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "table": {"type": "string"},
+            "where": {"type": "string", "description": "WHERE clause"}
+          },
+          "required": ["table", "where"]
+        }
+      }
+    ]
+  },
+
+  "gmail-mcp": {
+    "npm_package": "@anthropic/gmail-mcp",
+    "github": "anthropics/gmail-mcp",
+    "description": "Gmail - read, send, search emails",
+    "auth": {
+      "type": "oauth2",
+      "required": ["credentials.json"],
+      "instructions": "Create OAuth credentials at console.cloud.google.com for Gmail API"
+    },
+    "tools": [
+      {
+        "name": "list_messages",
+        "description": "List emails matching a query",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string", "description": "Gmail search query (from:, subject:, etc)"},
+            "maxResults": {"type": "number", "default": 10},
+            "labelIds": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "get_message",
+        "description": "Get full email content by ID",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "messageId": {"type": "string"}
+          },
+          "required": ["messageId"]
+        }
+      },
+      {
+        "name": "send_message",
+        "description": "Send an email",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "to": {"type": "string", "description": "Recipient email"},
+            "subject": {"type": "string"},
+            "body": {"type": "string", "description": "Email body (plain text or HTML)"},
+            "cc": {"type": "string"},
+            "bcc": {"type": "string"}
+          },
+          "required": ["to", "subject", "body"]
+        }
+      },
+      {
+        "name": "create_draft",
+        "description": "Create an email draft",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "to": {"type": "string"},
+            "subject": {"type": "string"},
+            "body": {"type": "string"}
+          },
+          "required": ["to", "subject", "body"]
+        }
+      },
+      {
+        "name": "list_labels",
+        "description": "List all Gmail labels",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      },
+      {
+        "name": "modify_labels",
+        "description": "Add or remove labels from an email",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "messageId": {"type": "string"},
+            "addLabelIds": {"type": "array", "items": {"type": "string"}},
+            "removeLabelIds": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["messageId"]
+        }
+      }
+    ]
+  },
+
+  "linear-mcp": {
+    "npm_package": "linear-mcp",
+    "github": "linearapp/linear-mcp",
+    "description": "Linear - issues, projects, teams, workflows",
+    "auth": {
+      "type": "env_token",
+      "required": ["LINEAR_API_KEY"],
+      "instructions": "Get API key from Linear Settings > API"
+    },
+    "tools": [
+      {
+        "name": "list_issues",
+        "description": "List issues with filters",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "teamId": {"type": "string"},
+            "status": {"type": "string"},
+            "assigneeId": {"type": "string"},
+            "limit": {"type": "number", "default": 50}
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "create_issue",
+        "description": "Create a new issue",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "title": {"type": "string"},
+            "description": {"type": "string"},
+            "teamId": {"type": "string"},
+            "priority": {"type": "number", "description": "0-4 (urgent to none)"},
+            "assigneeId": {"type": "string"}
+          },
+          "required": ["title", "teamId"]
+        }
+      },
+      {
+        "name": "update_issue",
+        "description": "Update an existing issue",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "issueId": {"type": "string"},
+            "title": {"type": "string"},
+            "description": {"type": "string"},
+            "status": {"type": "string"},
+            "priority": {"type": "number"}
+          },
+          "required": ["issueId"]
+        }
+      },
+      {
+        "name": "list_teams",
+        "description": "List all teams",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      },
+      {
+        "name": "list_projects",
+        "description": "List projects",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "teamId": {"type": "string"}
+          },
+          "required": []
+        }
+      }
+    ]
+  },
+
+  "exa-mcp": {
+    "npm_package": "exa-mcp-server",
+    "github": "exa-labs/exa-mcp-server",
+    "description": "Exa AI-powered web search and content discovery",
+    "auth": {
+      "type": "env_token",
+      "required": ["EXA_API_KEY"],
+      "instructions": "Get API key from: https://exa.ai"
+    },
+    "tools": [
+      {
+        "name": "search",
+        "description": "Search the web using Exa AI",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string", "description": "Search query"},
+            "numResults": {"type": "number", "default": 10},
+            "type": {"type": "string", "enum": ["neural", "keyword"], "default": "neural"},
+            "includeDomains": {"type": "array", "items": {"type": "string"}},
+            "excludeDomains": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["query"]
+        }
+      },
+      {
+        "name": "get_contents",
+        "description": "Get full contents of URLs",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "urls": {"type": "array", "items": {"type": "string"}},
+            "text": {"type": "boolean", "default": true},
+            "highlights": {"type": "boolean", "default": false}
+          },
+          "required": ["urls"]
+        }
+      },
+      {
+        "name": "find_similar",
+        "description": "Find pages similar to a URL",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {"type": "string"},
+            "numResults": {"type": "number", "default": 10}
+          },
+          "required": ["url"]
+        }
+      }
+    ]
+  },
+
+  "google-drive-mcp": {
+    "npm_package": "google-drive-mcp",
+    "github": "domdomegg/google-drive-mcp",
+    "description": "Google Drive - files, folders, search, sharing",
+    "auth": {
+      "type": "oauth2",
+      "required": ["credentials.json"],
+      "instructions": "Create OAuth credentials at console.cloud.google.com for Drive API"
+    },
+    "tools": [
+      {
+        "name": "list_files",
+        "description": "List files and folders in Drive",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "folderId": {"type": "string", "description": "Folder ID (use 'root' for root)", "default": "root"},
+            "query": {"type": "string", "description": "Search query"},
+            "pageSize": {"type": "number", "default": 10},
+            "orderBy": {"type": "string", "description": "Sort order (name, modifiedTime)"}
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "get_file",
+        "description": "Get file metadata by ID",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "fileId": {"type": "string", "description": "File ID"}
+          },
+          "required": ["fileId"]
+        }
+      },
+      {
+        "name": "download_file",
+        "description": "Download file content",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "fileId": {"type": "string"},
+            "mimeType": {"type": "string", "description": "Export format for Google Docs"}
+          },
+          "required": ["fileId"]
+        }
+      },
+      {
+        "name": "upload_file",
+        "description": "Upload a new file to Drive",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string", "description": "File name"},
+            "content": {"type": "string", "description": "File content"},
+            "mimeType": {"type": "string"},
+            "folderId": {"type": "string", "description": "Parent folder ID"}
+          },
+          "required": ["name", "content"]
+        }
+      },
+      {
+        "name": "create_folder",
+        "description": "Create a new folder",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "parentId": {"type": "string", "description": "Parent folder ID"}
+          },
+          "required": ["name"]
+        }
+      },
+      {
+        "name": "search_files",
+        "description": "Search for files by name or content",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string", "description": "Search query"},
+            "mimeType": {"type": "string", "description": "Filter by file type"},
+            "pageSize": {"type": "number", "default": 10}
+          },
+          "required": ["query"]
+        }
+      },
+      {
+        "name": "share_file",
+        "description": "Share a file with someone",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "fileId": {"type": "string"},
+            "email": {"type": "string", "description": "Email to share with"},
+            "role": {"type": "string", "enum": ["reader", "writer", "commenter"], "default": "reader"}
+          },
+          "required": ["fileId", "email"]
+        }
+      },
+      {
+        "name": "delete_file",
+        "description": "Move a file to trash",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "fileId": {"type": "string"}
+          },
+          "required": ["fileId"]
+        }
+      }
+    ]
+  },
+
+  "@browserbasehq/mcp-server-browserbase": {
+    "npm_package": "@browserbasehq/mcp-server-browserbase",
+    "github": "browserbase/mcp-server-browserbase",
+    "description": "Browserbase - cloud browser automation, web scraping",
+    "auth": {
+      "type": "env_token",
+      "required": ["BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID"],
+      "instructions": "Get API key from: https://browserbase.com"
+    },
+    "tools": [
+      {
+        "name": "create_session",
+        "description": "Create a new browser session",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "projectId": {"type": "string"},
+            "browserSettings": {"type": "object"}
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "navigate",
+        "description": "Navigate to a URL in the browser",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sessionId": {"type": "string"},
+            "url": {"type": "string"}
+          },
+          "required": ["sessionId", "url"]
+        }
+      },
+      {
+        "name": "screenshot",
+        "description": "Take a screenshot of the current page",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sessionId": {"type": "string"},
+            "fullPage": {"type": "boolean", "default": false}
+          },
+          "required": ["sessionId"]
+        }
+      },
+      {
+        "name": "click",
+        "description": "Click on an element",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sessionId": {"type": "string"},
+            "selector": {"type": "string"}
+          },
+          "required": ["sessionId", "selector"]
+        }
+      },
+      {
+        "name": "type",
+        "description": "Type text into an element",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sessionId": {"type": "string"},
+            "selector": {"type": "string"},
+            "text": {"type": "string"}
+          },
+          "required": ["sessionId", "selector", "text"]
+        }
+      },
+      {
+        "name": "get_content",
+        "description": "Get page HTML content",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sessionId": {"type": "string"},
+            "selector": {"type": "string", "description": "Optional CSS selector"}
+          },
+          "required": ["sessionId"]
+        }
+      },
+      {
+        "name": "close_session",
+        "description": "Close a browser session",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sessionId": {"type": "string"}
+          },
+          "required": ["sessionId"]
+        }
+      }
+    ]
+  },
+
+  "grafana-mcp": {
+    "npm_package": "@grafana/mcp-server",
+    "github": "grafana/grafana-mcp",
+    "description": "Grafana - dashboards, metrics, alerts, monitoring",
+    "auth": {
+      "type": "env_token",
+      "required": ["GRAFANA_API_KEY", "GRAFANA_URL"],
+      "instructions": "Create API key in Grafana: Configuration > API Keys"
+    },
+    "tools": [
+      {
+        "name": "list_dashboards",
+        "description": "List all dashboards",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string", "description": "Search query"},
+            "folderIds": {"type": "array", "items": {"type": "number"}},
+            "limit": {"type": "number", "default": 100}
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "get_dashboard",
+        "description": "Get dashboard by UID",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "uid": {"type": "string", "description": "Dashboard UID"}
+          },
+          "required": ["uid"]
+        }
+      },
+      {
+        "name": "query_metrics",
+        "description": "Query metrics from a datasource",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "datasourceUid": {"type": "string"},
+            "query": {"type": "string", "description": "PromQL or datasource query"},
+            "from": {"type": "string", "description": "Start time (now-1h, ISO)"},
+            "to": {"type": "string", "description": "End time"}
+          },
+          "required": ["datasourceUid", "query"]
+        }
+      },
+      {
+        "name": "list_alerts",
+        "description": "List alert rules",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "state": {"type": "string", "enum": ["firing", "pending", "inactive"]},
+            "limit": {"type": "number", "default": 100}
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "list_datasources",
+        "description": "List configured datasources",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      },
+      {
+        "name": "create_annotation",
+        "description": "Create an annotation on a dashboard",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "dashboardUid": {"type": "string"},
+            "time": {"type": "number", "description": "Unix timestamp"},
+            "text": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["text"]
+        }
+      }
+    ]
+  },
+
+  "airtable-mcp": {
+    "npm_package": "airtable-mcp-server",
+    "github": "airtable/airtable-mcp",
+    "description": "Airtable - bases, tables, records, views",
+    "auth": {
+      "type": "env_token",
+      "required": ["AIRTABLE_API_KEY"],
+      "instructions": "Get API key from: https://airtable.com/account"
+    },
+    "tools": [
+      {
+        "name": "list_bases",
+        "description": "List all accessible bases",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      },
+      {
+        "name": "list_tables",
+        "description": "List tables in a base",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "baseId": {"type": "string", "description": "Base ID (appXXXXXXXXXX)"}
+          },
+          "required": ["baseId"]
+        }
+      },
+      {
+        "name": "list_records",
+        "description": "List records from a table",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "baseId": {"type": "string"},
+            "tableId": {"type": "string"},
+            "view": {"type": "string", "description": "View name or ID"},
+            "filterByFormula": {"type": "string"},
+            "maxRecords": {"type": "number", "default": 100}
+          },
+          "required": ["baseId", "tableId"]
+        }
+      },
+      {
+        "name": "get_record",
+        "description": "Get a single record by ID",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "baseId": {"type": "string"},
+            "tableId": {"type": "string"},
+            "recordId": {"type": "string"}
+          },
+          "required": ["baseId", "tableId", "recordId"]
+        }
+      },
+      {
+        "name": "create_record",
+        "description": "Create a new record",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "baseId": {"type": "string"},
+            "tableId": {"type": "string"},
+            "fields": {"type": "object", "description": "Field name-value pairs"}
+          },
+          "required": ["baseId", "tableId", "fields"]
+        }
+      },
+      {
+        "name": "update_record",
+        "description": "Update an existing record",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "baseId": {"type": "string"},
+            "tableId": {"type": "string"},
+            "recordId": {"type": "string"},
+            "fields": {"type": "object"}
+          },
+          "required": ["baseId", "tableId", "recordId", "fields"]
+        }
+      },
+      {
+        "name": "delete_record",
+        "description": "Delete a record",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "baseId": {"type": "string"},
+            "tableId": {"type": "string"},
+            "recordId": {"type": "string"}
+          },
+          "required": ["baseId", "tableId", "recordId"]
+        }
+      }
+    ]
+  },
+
+  "whatsapp-mcp": {
+    "npm_package": "@anthropic/whatsapp-mcp",
+    "github": "anthropics/whatsapp-mcp",
+    "description": "WhatsApp - messages, groups, contacts",
+    "auth": {
+      "type": "env_token",
+      "required": ["WHATSAPP_API_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"],
+      "instructions": "Get from Meta Business Suite: https://business.facebook.com"
+    },
+    "tools": [
+      {
+        "name": "send_message",
+        "description": "Send a WhatsApp message",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "to": {"type": "string", "description": "Phone number with country code"},
+            "text": {"type": "string", "description": "Message text"}
+          },
+          "required": ["to", "text"]
+        }
+      },
+      {
+        "name": "send_template",
+        "description": "Send a template message",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "to": {"type": "string"},
+            "templateName": {"type": "string"},
+            "languageCode": {"type": "string", "default": "en"},
+            "parameters": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["to", "templateName"]
+        }
+      },
+      {
+        "name": "send_media",
+        "description": "Send image, video, or document",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "to": {"type": "string"},
+            "mediaType": {"type": "string", "enum": ["image", "video", "document", "audio"]},
+            "mediaUrl": {"type": "string"},
+            "caption": {"type": "string"}
+          },
+          "required": ["to", "mediaType", "mediaUrl"]
+        }
+      },
+      {
+        "name": "get_messages",
+        "description": "Get recent messages",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "conversationId": {"type": "string"},
+            "limit": {"type": "number", "default": 20}
+          },
+          "required": []
+        }
+      },
+      {
+        "name": "mark_read",
+        "description": "Mark a message as read",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "messageId": {"type": "string"}
+          },
+          "required": ["messageId"]
+        }
+      }
+    ]
+  }
+}
