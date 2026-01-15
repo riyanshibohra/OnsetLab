@@ -4,15 +4,20 @@
     "last_updated": "2026-01-15",
     "description": "Verified MCP server tool schemas for OnsetLab training data generation"
   },
-  
   "slack-mcp-server": {
     "npm_package": "slack-mcp-server",
     "github": "korotovsky/slack-mcp-server",
     "description": "Slack workspace access - messages, channels, search",
     "auth": {
       "type": "env_token",
-      "required": ["SLACK_MCP_XOXP_TOKEN"],
-      "optional": ["SLACK_MCP_XOXB_TOKEN", "SLACK_MCP_XOXC_TOKEN", "SLACK_MCP_XOXD_TOKEN"],
+      "required": [
+        "SLACK_MCP_XOXP_TOKEN"
+      ],
+      "optional": [
+        "SLACK_MCP_XOXB_TOKEN",
+        "SLACK_MCP_XOXC_TOKEN",
+        "SLACK_MCP_XOXD_TOKEN"
+      ],
       "instructions": "Get token from Slack API: https://api.slack.com/apps"
     },
     "tools": [
@@ -36,7 +41,9 @@
               "description": "Pagination cursor from previous response"
             }
           },
-          "required": ["channel_id"]
+          "required": [
+            "channel_id"
+          ]
         }
       },
       {
@@ -58,7 +65,10 @@
               "default": false
             }
           },
-          "required": ["channel_id", "thread_ts"]
+          "required": [
+            "channel_id",
+            "thread_ts"
+          ]
         }
       },
       {
@@ -80,7 +90,10 @@
               "description": "Reply to a thread (optional)"
             }
           },
-          "required": ["channel_id", "text"]
+          "required": [
+            "channel_id",
+            "text"
+          ]
         }
       },
       {
@@ -125,12 +138,13 @@
               "default": 100
             }
           },
-          "required": ["channel_types"]
+          "required": [
+            "channel_types"
+          ]
         }
       }
     ]
   },
-
   "@modelcontextprotocol/server-filesystem": {
     "npm_package": "@modelcontextprotocol/server-filesystem",
     "github": "modelcontextprotocol/servers",
@@ -142,146 +156,301 @@
     "tools": [
       {
         "name": "read_file",
-        "description": "Read complete contents of a file",
+        "description": "Read the complete contents of a file as text. DEPRECATED: Use read_text_file instead.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string", "description": "Path to the file"},
-            "head": {"type": "number", "description": "Return only first N lines"},
-            "tail": {"type": "number", "description": "Return only last N lines"}
+            "path": {
+              "type": "string"
+            },
+            "tail": {
+              "description": "If provided, returns only the last N lines of the file",
+              "type": "number"
+            },
+            "head": {
+              "description": "If provided, returns only the first N lines of the file",
+              "type": "number"
+            }
           },
-          "required": ["path"]
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "read_text_file",
+        "description": "Read the complete contents of a file from the file system as text. Handles various text encodings and provides detailed error messages if the file cannot be read. Use this tool when you need to examine the contents of a single file. Use the 'head' parameter to read only the first N lines of a file, or the 'tail' parameter to read only the last N lines of a file. Operates on the file as text regardless of extension. Only works within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "tail": {
+              "description": "If provided, returns only the last N lines of the file",
+              "type": "number"
+            },
+            "head": {
+              "description": "If provided, returns only the first N lines of the file",
+              "type": "number"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "read_media_file",
+        "description": "Read an image or audio file. Returns the base64 encoded data and MIME type. Only works within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ]
         }
       },
       {
         "name": "read_multiple_files",
-        "description": "Read multiple files at once",
+        "description": "Read the contents of multiple files simultaneously. This is more efficient than reading files one by one when you need to analyze or compare multiple files. Each file's content is returned with its path as a reference. Failed reads for individual files won't stop the entire operation. Only works within allowed directories.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "paths": {
+              "minItems": 1,
               "type": "array",
-              "items": {"type": "string"},
-              "description": "Array of file paths"
+              "items": {
+                "type": "string"
+              },
+              "description": "Array of file paths to read. Each path must be a string pointing to a valid file within allowed directories."
             }
           },
-          "required": ["paths"]
+          "required": [
+            "paths"
+          ]
         }
       },
       {
         "name": "write_file",
-        "description": "Create or overwrite a file",
+        "description": "Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning. Handles text content with proper encoding. Only works within allowed directories.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string", "description": "Path for the file"},
-            "content": {"type": "string", "description": "Content to write"}
+            "path": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            }
           },
-          "required": ["path", "content"]
+          "required": [
+            "path",
+            "content"
+          ]
         }
       },
       {
         "name": "edit_file",
-        "description": "Make line-based edits to a file",
+        "description": "Make line-based edits to a text file. Each edit replaces exact line sequences with new content. Returns a git-style diff showing the changes made. Only works within allowed directories.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string"},
+            "path": {
+              "type": "string"
+            },
             "edits": {
               "type": "array",
               "items": {
                 "type": "object",
                 "properties": {
-                  "oldText": {"type": "string"},
-                  "newText": {"type": "string"}
-                }
+                  "oldText": {
+                    "type": "string",
+                    "description": "Text to search for - must match exactly"
+                  },
+                  "newText": {
+                    "type": "string",
+                    "description": "Text to replace with"
+                  }
+                },
+                "required": [
+                  "oldText",
+                  "newText"
+                ]
               }
             },
-            "dryRun": {"type": "boolean", "default": false}
+            "dryRun": {
+              "default": false,
+              "description": "Preview changes using git-style diff format",
+              "type": "boolean"
+            }
           },
-          "required": ["path", "edits"]
+          "required": [
+            "path",
+            "edits"
+          ]
         }
       },
       {
         "name": "create_directory",
-        "description": "Create a new directory",
+        "description": "Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will succeed silently. Perfect for setting up directory structures for projects or ensuring required paths exist. Only works within allowed directories.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string", "description": "Directory path to create"}
+            "path": {
+              "type": "string"
+            }
           },
-          "required": ["path"]
+          "required": [
+            "path"
+          ]
         }
       },
       {
         "name": "list_directory",
-        "description": "List files and directories in a path",
+        "description": "Get a detailed listing of all files and directories in a specified path. Results clearly distinguish between files and directories with [FILE] and [DIR] prefixes. This tool is essential for understanding directory structure and finding specific files within a directory. Only works within allowed directories.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string", "description": "Directory to list"}
+            "path": {
+              "type": "string"
+            }
           },
-          "required": ["path"]
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "list_directory_with_sizes",
+        "description": "Get a detailed listing of all files and directories in a specified path, including sizes. Results clearly distinguish between files and directories with [FILE] and [DIR] prefixes. This tool is useful for understanding directory structure and finding specific files within a directory. Only works within allowed directories.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "sortBy": {
+              "default": "name",
+              "description": "Sort entries by name or size",
+              "type": "string",
+              "enum": [
+                "name",
+                "size"
+              ]
+            }
+          },
+          "required": [
+            "path"
+          ]
         }
       },
       {
         "name": "directory_tree",
-        "description": "Get recursive tree view of directory",
+        "description": "Get a recursive tree view of files and directories as a JSON structure. Each entry includes 'name', 'type' (file/directory), and 'children' for directories. Files have no children array, while directories always have a children array (which may be empty). The output is formatted with 2-space indentation for readability. Only works within allowed directories.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string"},
-            "excludePatterns": {"type": "array", "items": {"type": "string"}}
+            "path": {
+              "type": "string"
+            },
+            "excludePatterns": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "required": ["path"]
+          "required": [
+            "path"
+          ]
         }
       },
       {
         "name": "move_file",
-        "description": "Move or rename a file",
+        "description": "Move or rename files and directories. Can move files between directories and rename them in a single operation. If the destination exists, the operation will fail. Works across different directories and can be used for simple renaming within the same directory. Both source and destination must be within allowed directories.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "source": {"type": "string"},
-            "destination": {"type": "string"}
+            "source": {
+              "type": "string"
+            },
+            "destination": {
+              "type": "string"
+            }
           },
-          "required": ["source", "destination"]
+          "required": [
+            "source",
+            "destination"
+          ]
         }
       },
       {
         "name": "search_files",
-        "description": "Search for files matching a pattern",
+        "description": "Recursively search for files and directories matching a pattern. The patterns should be glob-style patterns that match paths relative to the working directory. Use pattern like '*.ext' to match files in current directory, and '**/*.ext' to match files in all subdirectories. Returns full paths to all matching items. Great for finding files when you don't know their exact location. Only searches within allowed directories.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string", "description": "Directory to search"},
-            "pattern": {"type": "string", "description": "Glob pattern (*.txt, **/*.js)"},
-            "excludePatterns": {"type": "array", "items": {"type": "string"}}
+            "path": {
+              "type": "string"
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "excludePatterns": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "required": ["path", "pattern"]
+          "required": [
+            "path",
+            "pattern"
+          ]
         }
       },
       {
         "name": "get_file_info",
-        "description": "Get file metadata (size, dates, permissions)",
+        "description": "Retrieve detailed metadata about a file or directory. Returns comprehensive information including size, creation time, last modified time, permissions, and type. This tool is perfect for understanding file characteristics without reading the actual content. Only works within allowed directories.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string"}
+            "path": {
+              "type": "string"
+            }
           },
-          "required": ["path"]
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "list_allowed_directories",
+        "description": "Returns the list of directories that this server is allowed to access. Subdirectories within these allowed directories are also accessible. Use this to understand which directories and their nested paths are available before trying to access files.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": []
         }
       }
     ]
   },
-
   "github-mcp": {
     "npm_package": "github-mcp",
     "github": "Seey215/github-mcp",
     "description": "GitHub repository management - issues, PRs, files",
     "auth": {
       "type": "env_token",
-      "required": ["GITHUB_TOKEN"],
+      "required": [
+        "GITHUB_TOKEN"
+      ],
       "instructions": "Create at: https://github.com/settings/tokens"
     },
     "tools": [
@@ -291,13 +460,36 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "owner": {"type": "string", "description": "Repository owner"},
-            "repo": {"type": "string", "description": "Repository name"},
-            "state": {"type": "string", "enum": ["open", "closed", "all"], "default": "open"},
-            "labels": {"type": "string", "description": "Comma-separated labels"},
-            "per_page": {"type": "number", "default": 30}
+            "owner": {
+              "type": "string",
+              "description": "Repository owner"
+            },
+            "repo": {
+              "type": "string",
+              "description": "Repository name"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed",
+                "all"
+              ],
+              "default": "open"
+            },
+            "labels": {
+              "type": "string",
+              "description": "Comma-separated labels"
+            },
+            "per_page": {
+              "type": "number",
+              "default": 30
+            }
           },
-          "required": ["owner", "repo"]
+          "required": [
+            "owner",
+            "repo"
+          ]
         }
       },
       {
@@ -306,11 +498,21 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "owner": {"type": "string"},
-            "repo": {"type": "string"},
-            "issue_number": {"type": "number"}
+            "owner": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "issue_number": {
+              "type": "number"
+            }
           },
-          "required": ["owner", "repo", "issue_number"]
+          "required": [
+            "owner",
+            "repo",
+            "issue_number"
+          ]
         }
       },
       {
@@ -319,14 +521,36 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "owner": {"type": "string"},
-            "repo": {"type": "string"},
-            "title": {"type": "string"},
-            "body": {"type": "string"},
-            "labels": {"type": "array", "items": {"type": "string"}},
-            "assignees": {"type": "array", "items": {"type": "string"}}
+            "owner": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "labels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "assignees": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "required": ["owner", "repo", "title"]
+          "required": [
+            "owner",
+            "repo",
+            "title"
+          ]
         }
       },
       {
@@ -335,14 +559,34 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "owner": {"type": "string"},
-            "repo": {"type": "string"},
-            "issue_number": {"type": "number"},
-            "title": {"type": "string"},
-            "body": {"type": "string"},
-            "state": {"type": "string", "enum": ["open", "closed"]}
+            "owner": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "issue_number": {
+              "type": "number"
+            },
+            "title": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed"
+              ]
+            }
           },
-          "required": ["owner", "repo", "issue_number"]
+          "required": [
+            "owner",
+            "repo",
+            "issue_number"
+          ]
         }
       },
       {
@@ -351,12 +595,29 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "owner": {"type": "string"},
-            "repo": {"type": "string"},
-            "state": {"type": "string", "enum": ["open", "closed", "all"]},
-            "base": {"type": "string", "description": "Filter by base branch"}
+            "owner": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed",
+                "all"
+              ]
+            },
+            "base": {
+              "type": "string",
+              "description": "Filter by base branch"
+            }
           },
-          "required": ["owner", "repo"]
+          "required": [
+            "owner",
+            "repo"
+          ]
         }
       },
       {
@@ -365,12 +626,25 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "owner": {"type": "string"},
-            "repo": {"type": "string"},
-            "path": {"type": "string"},
-            "ref": {"type": "string", "description": "Branch/tag/commit"}
+            "owner": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "string",
+              "description": "Branch/tag/commit"
+            }
           },
-          "required": ["owner", "repo", "path"]
+          "required": [
+            "owner",
+            "repo",
+            "path"
+          ]
         }
       },
       {
@@ -379,23 +653,39 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "query": {"type": "string", "description": "Search query"},
-            "sort": {"type": "string", "enum": ["stars", "forks", "updated"]},
-            "per_page": {"type": "number", "default": 30}
+            "query": {
+              "type": "string",
+              "description": "Search query"
+            },
+            "sort": {
+              "type": "string",
+              "enum": [
+                "stars",
+                "forks",
+                "updated"
+              ]
+            },
+            "per_page": {
+              "type": "number",
+              "default": 30
+            }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       }
     ]
   },
-
   "@cocal/google-calendar-mcp": {
     "npm_package": "@cocal/google-calendar-mcp",
     "github": "cocal-labs/google-calendar-mcp",
     "description": "Google Calendar management - events, scheduling, freebusy",
     "auth": {
       "type": "oauth2",
-      "required": ["credentials.json"],
+      "required": [
+        "credentials.json"
+      ],
       "instructions": "Create OAuth credentials at console.cloud.google.com, download credentials.json"
     },
     "tools": [
@@ -405,7 +695,10 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "timeZone": {"type": "string", "description": "IANA timezone (America/New_York)"}
+            "timeZone": {
+              "type": "string",
+              "description": "IANA timezone (America/New_York)"
+            }
           },
           "required": []
         }
@@ -425,12 +718,27 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "calendarId": {"type": "string", "description": "Calendar ID (use 'primary' for main)", "default": "primary"},
-            "timeMin": {"type": "string", "description": "Start time ISO8601 (2026-01-15T00:00:00)"},
-            "timeMax": {"type": "string", "description": "End time ISO8601"},
-            "maxResults": {"type": "number", "default": 10}
+            "calendarId": {
+              "type": "string",
+              "description": "Calendar ID (use 'primary' for main)",
+              "default": "primary"
+            },
+            "timeMin": {
+              "type": "string",
+              "description": "Start time ISO8601 (2026-01-15T00:00:00)"
+            },
+            "timeMax": {
+              "type": "string",
+              "description": "End time ISO8601"
+            },
+            "maxResults": {
+              "type": "number",
+              "default": 10
+            }
           },
-          "required": ["calendarId"]
+          "required": [
+            "calendarId"
+          ]
         }
       },
       {
@@ -439,10 +747,19 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "calendarId": {"type": "string", "default": "primary"},
-            "query": {"type": "string", "description": "Search text"}
+            "calendarId": {
+              "type": "string",
+              "default": "primary"
+            },
+            "query": {
+              "type": "string",
+              "description": "Search text"
+            }
           },
-          "required": ["calendarId", "query"]
+          "required": [
+            "calendarId",
+            "query"
+          ]
         }
       },
       {
@@ -451,15 +768,41 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "calendarId": {"type": "string", "default": "primary"},
-            "summary": {"type": "string", "description": "Event title"},
-            "start": {"type": "string", "description": "Start time ISO8601"},
-            "end": {"type": "string", "description": "End time ISO8601"},
-            "description": {"type": "string"},
-            "location": {"type": "string"},
-            "attendees": {"type": "array", "items": {"type": "string"}}
+            "calendarId": {
+              "type": "string",
+              "default": "primary"
+            },
+            "summary": {
+              "type": "string",
+              "description": "Event title"
+            },
+            "start": {
+              "type": "string",
+              "description": "Start time ISO8601"
+            },
+            "end": {
+              "type": "string",
+              "description": "End time ISO8601"
+            },
+            "description": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "attendees": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "required": ["calendarId", "summary", "start", "end"]
+          "required": [
+            "calendarId",
+            "summary",
+            "start",
+            "end"
+          ]
         }
       },
       {
@@ -468,15 +811,34 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "calendarId": {"type": "string", "default": "primary"},
-            "eventId": {"type": "string", "description": "Event ID to update"},
-            "summary": {"type": "string"},
-            "start": {"type": "string"},
-            "end": {"type": "string"},
-            "description": {"type": "string"},
-            "location": {"type": "string"}
+            "calendarId": {
+              "type": "string",
+              "default": "primary"
+            },
+            "eventId": {
+              "type": "string",
+              "description": "Event ID to update"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "start": {
+              "type": "string"
+            },
+            "end": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            }
           },
-          "required": ["calendarId", "eventId"]
+          "required": [
+            "calendarId",
+            "eventId"
+          ]
         }
       },
       {
@@ -485,10 +847,19 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "calendarId": {"type": "string", "default": "primary"},
-            "eventId": {"type": "string", "description": "Event ID to delete"}
+            "calendarId": {
+              "type": "string",
+              "default": "primary"
+            },
+            "eventId": {
+              "type": "string",
+              "description": "Event ID to delete"
+            }
           },
-          "required": ["calendarId", "eventId"]
+          "required": [
+            "calendarId",
+            "eventId"
+          ]
         }
       },
       {
@@ -497,23 +868,38 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "timeMin": {"type": "string", "description": "Start of range ISO8601"},
-            "timeMax": {"type": "string", "description": "End of range ISO8601"},
-            "calendarIds": {"type": "array", "items": {"type": "string"}}
+            "timeMin": {
+              "type": "string",
+              "description": "Start of range ISO8601"
+            },
+            "timeMax": {
+              "type": "string",
+              "description": "End of range ISO8601"
+            },
+            "calendarIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "required": ["timeMin", "timeMax"]
+          "required": [
+            "timeMin",
+            "timeMax"
+          ]
         }
       }
     ]
   },
-
   "notion-mcp": {
     "npm_package": "@anthropic/notion-mcp",
     "github": "anthropics/notion-mcp",
     "description": "Notion workspace - pages, databases, content",
     "auth": {
       "type": "env_token",
-      "required": ["NOTION_API_KEY"],
+      "required": [
+        "NOTION_API_KEY"
+      ],
       "instructions": "Create integration at: https://www.notion.so/my-integrations"
     },
     "tools": [
@@ -523,9 +909,21 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "query": {"type": "string", "description": "Search query"},
-            "filter": {"type": "string", "enum": ["page", "database"]},
-            "page_size": {"type": "number", "default": 10}
+            "query": {
+              "type": "string",
+              "description": "Search query"
+            },
+            "filter": {
+              "type": "string",
+              "enum": [
+                "page",
+                "database"
+              ]
+            },
+            "page_size": {
+              "type": "number",
+              "default": 10
+            }
           },
           "required": []
         }
@@ -536,9 +934,14 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "page_id": {"type": "string", "description": "Notion page ID"}
+            "page_id": {
+              "type": "string",
+              "description": "Notion page ID"
+            }
           },
-          "required": ["page_id"]
+          "required": [
+            "page_id"
+          ]
         }
       },
       {
@@ -547,11 +950,21 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "parent_database_id": {"type": "string"},
-            "title": {"type": "string"},
-            "properties": {"type": "object", "description": "Database properties"}
+            "parent_database_id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "properties": {
+              "type": "object",
+              "description": "Database properties"
+            }
           },
-          "required": ["parent_database_id", "title"]
+          "required": [
+            "parent_database_id",
+            "title"
+          ]
         }
       },
       {
@@ -560,10 +973,17 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "page_id": {"type": "string"},
-            "properties": {"type": "object"}
+            "page_id": {
+              "type": "string"
+            },
+            "properties": {
+              "type": "object"
+            }
           },
-          "required": ["page_id", "properties"]
+          "required": [
+            "page_id",
+            "properties"
+          ]
         }
       },
       {
@@ -572,12 +992,25 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "database_id": {"type": "string"},
-            "filter": {"type": "object", "description": "Filter conditions"},
-            "sorts": {"type": "array", "description": "Sort conditions"},
-            "page_size": {"type": "number", "default": 100}
+            "database_id": {
+              "type": "string"
+            },
+            "filter": {
+              "type": "object",
+              "description": "Filter conditions"
+            },
+            "sorts": {
+              "type": "array",
+              "description": "Sort conditions"
+            },
+            "page_size": {
+              "type": "number",
+              "default": 100
+            }
           },
-          "required": ["database_id"]
+          "required": [
+            "database_id"
+          ]
         }
       },
       {
@@ -586,15 +1019,23 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "block_id": {"type": "string", "description": "Page or block ID"},
-            "children": {"type": "array", "description": "Block objects to add"}
+            "block_id": {
+              "type": "string",
+              "description": "Page or block ID"
+            },
+            "children": {
+              "type": "array",
+              "description": "Block objects to add"
+            }
           },
-          "required": ["block_id", "children"]
+          "required": [
+            "block_id",
+            "children"
+          ]
         }
       }
     ]
   },
-
   "playwright-mcp": {
     "npm_package": "@anthropic/playwright-mcp",
     "github": "anthropics/playwright-mcp",
@@ -610,9 +1051,14 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "url": {"type": "string", "description": "URL to navigate to"}
+            "url": {
+              "type": "string",
+              "description": "URL to navigate to"
+            }
           },
-          "required": ["url"]
+          "required": [
+            "url"
+          ]
         }
       },
       {
@@ -621,8 +1067,14 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "fullPage": {"type": "boolean", "default": false},
-            "selector": {"type": "string", "description": "CSS selector for element screenshot"}
+            "fullPage": {
+              "type": "boolean",
+              "default": false
+            },
+            "selector": {
+              "type": "string",
+              "description": "CSS selector for element screenshot"
+            }
           },
           "required": []
         }
@@ -633,9 +1085,14 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "selector": {"type": "string", "description": "CSS selector"}
+            "selector": {
+              "type": "string",
+              "description": "CSS selector"
+            }
           },
-          "required": ["selector"]
+          "required": [
+            "selector"
+          ]
         }
       },
       {
@@ -644,10 +1101,19 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "selector": {"type": "string", "description": "CSS selector for input"},
-            "value": {"type": "string", "description": "Value to fill"}
+            "selector": {
+              "type": "string",
+              "description": "CSS selector for input"
+            },
+            "value": {
+              "type": "string",
+              "description": "Value to fill"
+            }
           },
-          "required": ["selector", "value"]
+          "required": [
+            "selector",
+            "value"
+          ]
         }
       },
       {
@@ -656,9 +1122,14 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "script": {"type": "string", "description": "JavaScript code to run"}
+            "script": {
+              "type": "string",
+              "description": "JavaScript code to run"
+            }
           },
-          "required": ["script"]
+          "required": [
+            "script"
+          ]
         }
       },
       {
@@ -667,9 +1138,13 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "selector": {"type": "string"}
+            "selector": {
+              "type": "string"
+            }
           },
-          "required": ["selector"]
+          "required": [
+            "selector"
+          ]
         }
       },
       {
@@ -678,22 +1153,30 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "selector": {"type": "string"},
-            "timeout": {"type": "number", "default": 30000}
+            "selector": {
+              "type": "string"
+            },
+            "timeout": {
+              "type": "number",
+              "default": 30000
+            }
           },
-          "required": ["selector"]
+          "required": [
+            "selector"
+          ]
         }
       }
     ]
   },
-
   "postgres-mcp": {
     "npm_package": "@anthropic/postgres-mcp",
-    "github": "anthropics/postgres-mcp", 
+    "github": "anthropics/postgres-mcp",
     "description": "PostgreSQL database - queries, schema inspection",
     "auth": {
       "type": "connection_string",
-      "required": ["DATABASE_URL"],
+      "required": [
+        "DATABASE_URL"
+      ],
       "instructions": "Format: postgresql://user:password@host:port/database"
     },
     "tools": [
@@ -703,10 +1186,18 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "sql": {"type": "string", "description": "SQL query to execute"},
-            "params": {"type": "array", "description": "Query parameters"}
+            "sql": {
+              "type": "string",
+              "description": "SQL query to execute"
+            },
+            "params": {
+              "type": "array",
+              "description": "Query parameters"
+            }
           },
-          "required": ["sql"]
+          "required": [
+            "sql"
+          ]
         }
       },
       {
@@ -715,7 +1206,10 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "schema": {"type": "string", "default": "public"}
+            "schema": {
+              "type": "string",
+              "default": "public"
+            }
           },
           "required": []
         }
@@ -726,10 +1220,18 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "table": {"type": "string", "description": "Table name"},
-            "schema": {"type": "string", "default": "public"}
+            "table": {
+              "type": "string",
+              "description": "Table name"
+            },
+            "schema": {
+              "type": "string",
+              "default": "public"
+            }
           },
-          "required": ["table"]
+          "required": [
+            "table"
+          ]
         }
       },
       {
@@ -738,10 +1240,18 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "table": {"type": "string"},
-            "data": {"type": "object", "description": "Column-value pairs"}
+            "table": {
+              "type": "string"
+            },
+            "data": {
+              "type": "object",
+              "description": "Column-value pairs"
+            }
           },
-          "required": ["table", "data"]
+          "required": [
+            "table",
+            "data"
+          ]
         }
       },
       {
@@ -750,11 +1260,22 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "table": {"type": "string"},
-            "data": {"type": "object"},
-            "where": {"type": "string", "description": "WHERE clause"}
+            "table": {
+              "type": "string"
+            },
+            "data": {
+              "type": "object"
+            },
+            "where": {
+              "type": "string",
+              "description": "WHERE clause"
+            }
           },
-          "required": ["table", "data", "where"]
+          "required": [
+            "table",
+            "data",
+            "where"
+          ]
         }
       },
       {
@@ -763,22 +1284,31 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "table": {"type": "string"},
-            "where": {"type": "string", "description": "WHERE clause"}
+            "table": {
+              "type": "string"
+            },
+            "where": {
+              "type": "string",
+              "description": "WHERE clause"
+            }
           },
-          "required": ["table", "where"]
+          "required": [
+            "table",
+            "where"
+          ]
         }
       }
     ]
   },
-
   "gmail-mcp": {
     "npm_package": "@anthropic/gmail-mcp",
     "github": "anthropics/gmail-mcp",
     "description": "Gmail - read, send, search emails",
     "auth": {
       "type": "oauth2",
-      "required": ["credentials.json"],
+      "required": [
+        "credentials.json"
+      ],
       "instructions": "Create OAuth credentials at console.cloud.google.com for Gmail API"
     },
     "tools": [
@@ -788,9 +1318,20 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "query": {"type": "string", "description": "Gmail search query (from:, subject:, etc)"},
-            "maxResults": {"type": "number", "default": 10},
-            "labelIds": {"type": "array", "items": {"type": "string"}}
+            "query": {
+              "type": "string",
+              "description": "Gmail search query (from:, subject:, etc)"
+            },
+            "maxResults": {
+              "type": "number",
+              "default": 10
+            },
+            "labelIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
           "required": []
         }
@@ -801,9 +1342,13 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "messageId": {"type": "string"}
+            "messageId": {
+              "type": "string"
+            }
           },
-          "required": ["messageId"]
+          "required": [
+            "messageId"
+          ]
         }
       },
       {
@@ -812,13 +1357,29 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "to": {"type": "string", "description": "Recipient email"},
-            "subject": {"type": "string"},
-            "body": {"type": "string", "description": "Email body (plain text or HTML)"},
-            "cc": {"type": "string"},
-            "bcc": {"type": "string"}
+            "to": {
+              "type": "string",
+              "description": "Recipient email"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string",
+              "description": "Email body (plain text or HTML)"
+            },
+            "cc": {
+              "type": "string"
+            },
+            "bcc": {
+              "type": "string"
+            }
           },
-          "required": ["to", "subject", "body"]
+          "required": [
+            "to",
+            "subject",
+            "body"
+          ]
         }
       },
       {
@@ -827,11 +1388,21 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "to": {"type": "string"},
-            "subject": {"type": "string"},
-            "body": {"type": "string"}
+            "to": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            }
           },
-          "required": ["to", "subject", "body"]
+          "required": [
+            "to",
+            "subject",
+            "body"
+          ]
         }
       },
       {
@@ -849,23 +1420,38 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "messageId": {"type": "string"},
-            "addLabelIds": {"type": "array", "items": {"type": "string"}},
-            "removeLabelIds": {"type": "array", "items": {"type": "string"}}
+            "messageId": {
+              "type": "string"
+            },
+            "addLabelIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "removeLabelIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "required": ["messageId"]
+          "required": [
+            "messageId"
+          ]
         }
       }
     ]
   },
-
   "linear-mcp": {
     "npm_package": "linear-mcp",
     "github": "linearapp/linear-mcp",
     "description": "Linear - issues, projects, teams, workflows",
     "auth": {
       "type": "env_token",
-      "required": ["LINEAR_API_KEY"],
+      "required": [
+        "LINEAR_API_KEY"
+      ],
       "instructions": "Get API key from Linear Settings > API"
     },
     "tools": [
@@ -875,10 +1461,19 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "teamId": {"type": "string"},
-            "status": {"type": "string"},
-            "assigneeId": {"type": "string"},
-            "limit": {"type": "number", "default": 50}
+            "teamId": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "assigneeId": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "number",
+              "default": 50
+            }
           },
           "required": []
         }
@@ -889,13 +1484,27 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "title": {"type": "string"},
-            "description": {"type": "string"},
-            "teamId": {"type": "string"},
-            "priority": {"type": "number", "description": "0-4 (urgent to none)"},
-            "assigneeId": {"type": "string"}
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "teamId": {
+              "type": "string"
+            },
+            "priority": {
+              "type": "number",
+              "description": "0-4 (urgent to none)"
+            },
+            "assigneeId": {
+              "type": "string"
+            }
           },
-          "required": ["title", "teamId"]
+          "required": [
+            "title",
+            "teamId"
+          ]
         }
       },
       {
@@ -904,13 +1513,25 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "issueId": {"type": "string"},
-            "title": {"type": "string"},
-            "description": {"type": "string"},
-            "status": {"type": "string"},
-            "priority": {"type": "number"}
+            "issueId": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "priority": {
+              "type": "number"
+            }
           },
-          "required": ["issueId"]
+          "required": [
+            "issueId"
+          ]
         }
       },
       {
@@ -928,21 +1549,24 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "teamId": {"type": "string"}
+            "teamId": {
+              "type": "string"
+            }
           },
           "required": []
         }
       }
     ]
   },
-
   "exa-mcp": {
     "npm_package": "exa-mcp-server",
     "github": "exa-labs/exa-mcp-server",
     "description": "Exa AI-powered web search and content discovery",
     "auth": {
       "type": "env_token",
-      "required": ["EXA_API_KEY"],
+      "required": [
+        "EXA_API_KEY"
+      ],
       "instructions": "Get API key from: https://exa.ai"
     },
     "tools": [
@@ -952,13 +1576,38 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "query": {"type": "string", "description": "Search query"},
-            "numResults": {"type": "number", "default": 10},
-            "type": {"type": "string", "enum": ["neural", "keyword"], "default": "neural"},
-            "includeDomains": {"type": "array", "items": {"type": "string"}},
-            "excludeDomains": {"type": "array", "items": {"type": "string"}}
+            "query": {
+              "type": "string",
+              "description": "Search query"
+            },
+            "numResults": {
+              "type": "number",
+              "default": 10
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "neural",
+                "keyword"
+              ],
+              "default": "neural"
+            },
+            "includeDomains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "excludeDomains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
@@ -967,11 +1616,24 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "urls": {"type": "array", "items": {"type": "string"}},
-            "text": {"type": "boolean", "default": true},
-            "highlights": {"type": "boolean", "default": false}
+            "urls": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "text": {
+              "type": "boolean",
+              "default": true
+            },
+            "highlights": {
+              "type": "boolean",
+              "default": false
+            }
           },
-          "required": ["urls"]
+          "required": [
+            "urls"
+          ]
         }
       },
       {
@@ -980,22 +1642,30 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "url": {"type": "string"},
-            "numResults": {"type": "number", "default": 10}
+            "url": {
+              "type": "string"
+            },
+            "numResults": {
+              "type": "number",
+              "default": 10
+            }
           },
-          "required": ["url"]
+          "required": [
+            "url"
+          ]
         }
       }
     ]
   },
-
   "google-drive-mcp": {
     "npm_package": "google-drive-mcp",
     "github": "domdomegg/google-drive-mcp",
     "description": "Google Drive - files, folders, search, sharing",
     "auth": {
       "type": "oauth2",
-      "required": ["credentials.json"],
+      "required": [
+        "credentials.json"
+      ],
       "instructions": "Create OAuth credentials at console.cloud.google.com for Drive API"
     },
     "tools": [
@@ -1005,10 +1675,23 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "folderId": {"type": "string", "description": "Folder ID (use 'root' for root)", "default": "root"},
-            "query": {"type": "string", "description": "Search query"},
-            "pageSize": {"type": "number", "default": 10},
-            "orderBy": {"type": "string", "description": "Sort order (name, modifiedTime)"}
+            "folderId": {
+              "type": "string",
+              "description": "Folder ID (use 'root' for root)",
+              "default": "root"
+            },
+            "query": {
+              "type": "string",
+              "description": "Search query"
+            },
+            "pageSize": {
+              "type": "number",
+              "default": 10
+            },
+            "orderBy": {
+              "type": "string",
+              "description": "Sort order (name, modifiedTime)"
+            }
           },
           "required": []
         }
@@ -1019,9 +1702,14 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "fileId": {"type": "string", "description": "File ID"}
+            "fileId": {
+              "type": "string",
+              "description": "File ID"
+            }
           },
-          "required": ["fileId"]
+          "required": [
+            "fileId"
+          ]
         }
       },
       {
@@ -1030,10 +1718,17 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "fileId": {"type": "string"},
-            "mimeType": {"type": "string", "description": "Export format for Google Docs"}
+            "fileId": {
+              "type": "string"
+            },
+            "mimeType": {
+              "type": "string",
+              "description": "Export format for Google Docs"
+            }
           },
-          "required": ["fileId"]
+          "required": [
+            "fileId"
+          ]
         }
       },
       {
@@ -1042,12 +1737,26 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "name": {"type": "string", "description": "File name"},
-            "content": {"type": "string", "description": "File content"},
-            "mimeType": {"type": "string"},
-            "folderId": {"type": "string", "description": "Parent folder ID"}
+            "name": {
+              "type": "string",
+              "description": "File name"
+            },
+            "content": {
+              "type": "string",
+              "description": "File content"
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "folderId": {
+              "type": "string",
+              "description": "Parent folder ID"
+            }
           },
-          "required": ["name", "content"]
+          "required": [
+            "name",
+            "content"
+          ]
         }
       },
       {
@@ -1056,10 +1765,17 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "name": {"type": "string"},
-            "parentId": {"type": "string", "description": "Parent folder ID"}
+            "name": {
+              "type": "string"
+            },
+            "parentId": {
+              "type": "string",
+              "description": "Parent folder ID"
+            }
           },
-          "required": ["name"]
+          "required": [
+            "name"
+          ]
         }
       },
       {
@@ -1068,11 +1784,22 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "query": {"type": "string", "description": "Search query"},
-            "mimeType": {"type": "string", "description": "Filter by file type"},
-            "pageSize": {"type": "number", "default": 10}
+            "query": {
+              "type": "string",
+              "description": "Search query"
+            },
+            "mimeType": {
+              "type": "string",
+              "description": "Filter by file type"
+            },
+            "pageSize": {
+              "type": "number",
+              "default": 10
+            }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
@@ -1081,11 +1808,27 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "fileId": {"type": "string"},
-            "email": {"type": "string", "description": "Email to share with"},
-            "role": {"type": "string", "enum": ["reader", "writer", "commenter"], "default": "reader"}
+            "fileId": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string",
+              "description": "Email to share with"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "reader",
+                "writer",
+                "commenter"
+              ],
+              "default": "reader"
+            }
           },
-          "required": ["fileId", "email"]
+          "required": [
+            "fileId",
+            "email"
+          ]
         }
       },
       {
@@ -1094,21 +1837,27 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "fileId": {"type": "string"}
+            "fileId": {
+              "type": "string"
+            }
           },
-          "required": ["fileId"]
+          "required": [
+            "fileId"
+          ]
         }
       }
     ]
   },
-
   "@browserbasehq/mcp-server-browserbase": {
     "npm_package": "@browserbasehq/mcp-server-browserbase",
     "github": "browserbase/mcp-server-browserbase",
     "description": "Browserbase - cloud browser automation, web scraping",
     "auth": {
       "type": "env_token",
-      "required": ["BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID"],
+      "required": [
+        "BROWSERBASE_API_KEY",
+        "BROWSERBASE_PROJECT_ID"
+      ],
       "instructions": "Get API key from: https://browserbase.com"
     },
     "tools": [
@@ -1118,8 +1867,12 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "projectId": {"type": "string"},
-            "browserSettings": {"type": "object"}
+            "projectId": {
+              "type": "string"
+            },
+            "browserSettings": {
+              "type": "object"
+            }
           },
           "required": []
         }
@@ -1130,10 +1883,17 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "sessionId": {"type": "string"},
-            "url": {"type": "string"}
+            "sessionId": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
           },
-          "required": ["sessionId", "url"]
+          "required": [
+            "sessionId",
+            "url"
+          ]
         }
       },
       {
@@ -1142,10 +1902,17 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "sessionId": {"type": "string"},
-            "fullPage": {"type": "boolean", "default": false}
+            "sessionId": {
+              "type": "string"
+            },
+            "fullPage": {
+              "type": "boolean",
+              "default": false
+            }
           },
-          "required": ["sessionId"]
+          "required": [
+            "sessionId"
+          ]
         }
       },
       {
@@ -1154,10 +1921,17 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "sessionId": {"type": "string"},
-            "selector": {"type": "string"}
+            "sessionId": {
+              "type": "string"
+            },
+            "selector": {
+              "type": "string"
+            }
           },
-          "required": ["sessionId", "selector"]
+          "required": [
+            "sessionId",
+            "selector"
+          ]
         }
       },
       {
@@ -1166,11 +1940,21 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "sessionId": {"type": "string"},
-            "selector": {"type": "string"},
-            "text": {"type": "string"}
+            "sessionId": {
+              "type": "string"
+            },
+            "selector": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
           },
-          "required": ["sessionId", "selector", "text"]
+          "required": [
+            "sessionId",
+            "selector",
+            "text"
+          ]
         }
       },
       {
@@ -1179,10 +1963,17 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "sessionId": {"type": "string"},
-            "selector": {"type": "string", "description": "Optional CSS selector"}
+            "sessionId": {
+              "type": "string"
+            },
+            "selector": {
+              "type": "string",
+              "description": "Optional CSS selector"
+            }
           },
-          "required": ["sessionId"]
+          "required": [
+            "sessionId"
+          ]
         }
       },
       {
@@ -1191,21 +1982,27 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "sessionId": {"type": "string"}
+            "sessionId": {
+              "type": "string"
+            }
           },
-          "required": ["sessionId"]
+          "required": [
+            "sessionId"
+          ]
         }
       }
     ]
   },
-
   "grafana-mcp": {
     "npm_package": "@grafana/mcp-server",
     "github": "grafana/grafana-mcp",
     "description": "Grafana - dashboards, metrics, alerts, monitoring",
     "auth": {
       "type": "env_token",
-      "required": ["GRAFANA_API_KEY", "GRAFANA_URL"],
+      "required": [
+        "GRAFANA_API_KEY",
+        "GRAFANA_URL"
+      ],
       "instructions": "Create API key in Grafana: Configuration > API Keys"
     },
     "tools": [
@@ -1215,9 +2012,20 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "query": {"type": "string", "description": "Search query"},
-            "folderIds": {"type": "array", "items": {"type": "number"}},
-            "limit": {"type": "number", "default": 100}
+            "query": {
+              "type": "string",
+              "description": "Search query"
+            },
+            "folderIds": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            "limit": {
+              "type": "number",
+              "default": 100
+            }
           },
           "required": []
         }
@@ -1228,9 +2036,14 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "uid": {"type": "string", "description": "Dashboard UID"}
+            "uid": {
+              "type": "string",
+              "description": "Dashboard UID"
+            }
           },
-          "required": ["uid"]
+          "required": [
+            "uid"
+          ]
         }
       },
       {
@@ -1239,12 +2052,26 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "datasourceUid": {"type": "string"},
-            "query": {"type": "string", "description": "PromQL or datasource query"},
-            "from": {"type": "string", "description": "Start time (now-1h, ISO)"},
-            "to": {"type": "string", "description": "End time"}
+            "datasourceUid": {
+              "type": "string"
+            },
+            "query": {
+              "type": "string",
+              "description": "PromQL or datasource query"
+            },
+            "from": {
+              "type": "string",
+              "description": "Start time (now-1h, ISO)"
+            },
+            "to": {
+              "type": "string",
+              "description": "End time"
+            }
           },
-          "required": ["datasourceUid", "query"]
+          "required": [
+            "datasourceUid",
+            "query"
+          ]
         }
       },
       {
@@ -1253,8 +2080,18 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "state": {"type": "string", "enum": ["firing", "pending", "inactive"]},
-            "limit": {"type": "number", "default": 100}
+            "state": {
+              "type": "string",
+              "enum": [
+                "firing",
+                "pending",
+                "inactive"
+              ]
+            },
+            "limit": {
+              "type": "number",
+              "default": 100
+            }
           },
           "required": []
         }
@@ -1274,24 +2111,39 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "dashboardUid": {"type": "string"},
-            "time": {"type": "number", "description": "Unix timestamp"},
-            "text": {"type": "string"},
-            "tags": {"type": "array", "items": {"type": "string"}}
+            "dashboardUid": {
+              "type": "string"
+            },
+            "time": {
+              "type": "number",
+              "description": "Unix timestamp"
+            },
+            "text": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "required": ["text"]
+          "required": [
+            "text"
+          ]
         }
       }
     ]
   },
-
   "airtable-mcp": {
     "npm_package": "airtable-mcp-server",
     "github": "airtable/airtable-mcp",
     "description": "Airtable - bases, tables, records, views",
     "auth": {
       "type": "env_token",
-      "required": ["AIRTABLE_API_KEY"],
+      "required": [
+        "AIRTABLE_API_KEY"
+      ],
       "instructions": "Get API key from: https://airtable.com/account"
     },
     "tools": [
@@ -1310,9 +2162,14 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "baseId": {"type": "string", "description": "Base ID (appXXXXXXXXXX)"}
+            "baseId": {
+              "type": "string",
+              "description": "Base ID (appXXXXXXXXXX)"
+            }
           },
-          "required": ["baseId"]
+          "required": [
+            "baseId"
+          ]
         }
       },
       {
@@ -1321,13 +2178,28 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "baseId": {"type": "string"},
-            "tableId": {"type": "string"},
-            "view": {"type": "string", "description": "View name or ID"},
-            "filterByFormula": {"type": "string"},
-            "maxRecords": {"type": "number", "default": 100}
+            "baseId": {
+              "type": "string"
+            },
+            "tableId": {
+              "type": "string"
+            },
+            "view": {
+              "type": "string",
+              "description": "View name or ID"
+            },
+            "filterByFormula": {
+              "type": "string"
+            },
+            "maxRecords": {
+              "type": "number",
+              "default": 100
+            }
           },
-          "required": ["baseId", "tableId"]
+          "required": [
+            "baseId",
+            "tableId"
+          ]
         }
       },
       {
@@ -1336,11 +2208,21 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "baseId": {"type": "string"},
-            "tableId": {"type": "string"},
-            "recordId": {"type": "string"}
+            "baseId": {
+              "type": "string"
+            },
+            "tableId": {
+              "type": "string"
+            },
+            "recordId": {
+              "type": "string"
+            }
           },
-          "required": ["baseId", "tableId", "recordId"]
+          "required": [
+            "baseId",
+            "tableId",
+            "recordId"
+          ]
         }
       },
       {
@@ -1349,11 +2231,22 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "baseId": {"type": "string"},
-            "tableId": {"type": "string"},
-            "fields": {"type": "object", "description": "Field name-value pairs"}
+            "baseId": {
+              "type": "string"
+            },
+            "tableId": {
+              "type": "string"
+            },
+            "fields": {
+              "type": "object",
+              "description": "Field name-value pairs"
+            }
           },
-          "required": ["baseId", "tableId", "fields"]
+          "required": [
+            "baseId",
+            "tableId",
+            "fields"
+          ]
         }
       },
       {
@@ -1362,12 +2255,25 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "baseId": {"type": "string"},
-            "tableId": {"type": "string"},
-            "recordId": {"type": "string"},
-            "fields": {"type": "object"}
+            "baseId": {
+              "type": "string"
+            },
+            "tableId": {
+              "type": "string"
+            },
+            "recordId": {
+              "type": "string"
+            },
+            "fields": {
+              "type": "object"
+            }
           },
-          "required": ["baseId", "tableId", "recordId", "fields"]
+          "required": [
+            "baseId",
+            "tableId",
+            "recordId",
+            "fields"
+          ]
         }
       },
       {
@@ -1376,23 +2282,35 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "baseId": {"type": "string"},
-            "tableId": {"type": "string"},
-            "recordId": {"type": "string"}
+            "baseId": {
+              "type": "string"
+            },
+            "tableId": {
+              "type": "string"
+            },
+            "recordId": {
+              "type": "string"
+            }
           },
-          "required": ["baseId", "tableId", "recordId"]
+          "required": [
+            "baseId",
+            "tableId",
+            "recordId"
+          ]
         }
       }
     ]
   },
-
   "whatsapp-mcp": {
     "npm_package": "@anthropic/whatsapp-mcp",
     "github": "anthropics/whatsapp-mcp",
     "description": "WhatsApp - messages, groups, contacts",
     "auth": {
       "type": "env_token",
-      "required": ["WHATSAPP_API_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"],
+      "required": [
+        "WHATSAPP_API_TOKEN",
+        "WHATSAPP_PHONE_NUMBER_ID"
+      ],
       "instructions": "Get from Meta Business Suite: https://business.facebook.com"
     },
     "tools": [
@@ -1402,10 +2320,19 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "to": {"type": "string", "description": "Phone number with country code"},
-            "text": {"type": "string", "description": "Message text"}
+            "to": {
+              "type": "string",
+              "description": "Phone number with country code"
+            },
+            "text": {
+              "type": "string",
+              "description": "Message text"
+            }
           },
-          "required": ["to", "text"]
+          "required": [
+            "to",
+            "text"
+          ]
         }
       },
       {
@@ -1414,12 +2341,27 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "to": {"type": "string"},
-            "templateName": {"type": "string"},
-            "languageCode": {"type": "string", "default": "en"},
-            "parameters": {"type": "array", "items": {"type": "string"}}
+            "to": {
+              "type": "string"
+            },
+            "templateName": {
+              "type": "string"
+            },
+            "languageCode": {
+              "type": "string",
+              "default": "en"
+            },
+            "parameters": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
-          "required": ["to", "templateName"]
+          "required": [
+            "to",
+            "templateName"
+          ]
         }
       },
       {
@@ -1428,12 +2370,30 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "to": {"type": "string"},
-            "mediaType": {"type": "string", "enum": ["image", "video", "document", "audio"]},
-            "mediaUrl": {"type": "string"},
-            "caption": {"type": "string"}
+            "to": {
+              "type": "string"
+            },
+            "mediaType": {
+              "type": "string",
+              "enum": [
+                "image",
+                "video",
+                "document",
+                "audio"
+              ]
+            },
+            "mediaUrl": {
+              "type": "string"
+            },
+            "caption": {
+              "type": "string"
+            }
           },
-          "required": ["to", "mediaType", "mediaUrl"]
+          "required": [
+            "to",
+            "mediaType",
+            "mediaUrl"
+          ]
         }
       },
       {
@@ -1442,8 +2402,13 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "conversationId": {"type": "string"},
-            "limit": {"type": "number", "default": 20}
+            "conversationId": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "number",
+              "default": 20
+            }
           },
           "required": []
         }
@@ -1454,9 +2419,13 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "messageId": {"type": "string"}
+            "messageId": {
+              "type": "string"
+            }
           },
-          "required": ["messageId"]
+          "required": [
+            "messageId"
+          ]
         }
       }
     ]
