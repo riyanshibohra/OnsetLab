@@ -411,6 +411,71 @@ Output ONLY the JSON array."""
 
 
 # ============================================================================
+# Helper Functions
+# ============================================================================
+
+def calculate_recommended_examples(num_tools: int) -> int:
+    """
+    Calculate recommended number of examples based on tool count.
+    
+    Formula:
+    - Base: 150 examples (covers format, greetings, clarifications)
+    - Per tool: 50 examples (parameter variations, phrasings)
+    - Minimum: 200, Maximum: 600
+    """
+    base = 150
+    per_tool = 50
+    
+    calculated = base + (num_tools * per_tool)
+    
+    minimum = 200
+    maximum = 600
+    
+    return max(minimum, min(maximum, calculated))
+
+
+def prompt_for_count(num_tools: int, tool_names: list[str]) -> int:
+    """
+    Interactive prompt to confirm example count.
+    
+    Returns the number of examples to generate.
+    """
+    recommended = calculate_recommended_examples(num_tools)
+    
+    print(f"\n📊 Found {num_tools} tools:")
+    for name in tool_names[:8]:  # Show first 8
+        print(f"   • {name}")
+    if len(tool_names) > 8:
+        print(f"   • ... and {len(tool_names) - 8} more")
+    
+    print(f"\n💡 Recommended: {recommended} examples")
+    print(f"   (Base: 150 + {num_tools} tools × 50 = {150 + num_tools * 50}, capped at 200-600)")
+    
+    while True:
+        response = input(f"\n   Proceed with {recommended}? [Y/n/custom number]: ").strip().lower()
+        
+        if response in ("", "y", "yes"):
+            return recommended
+        elif response in ("n", "no"):
+            print("   Cancelled.")
+            return 0
+        else:
+            # Try to parse as number
+            try:
+                custom = int(response)
+                if custom < 10:
+                    print("   ⚠️ Minimum 10 examples required.")
+                    continue
+                if custom > 2000:
+                    confirm = input(f"   ⚠️ {custom} is a lot! Are you sure? [y/N]: ").strip().lower()
+                    if confirm not in ("y", "yes"):
+                        continue
+                return custom
+            except ValueError:
+                print("   ❌ Invalid input. Enter Y, N, or a number.")
+
+
+# ============================================================================
 # CLI Interface
 # ============================================================================
 
@@ -423,12 +488,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Using environment variable for API key
-  export OPENAI_API_KEY="sk-..."
+  # Interactive mode (recommends example count)
   python data_generator.py --problem "calendar agent" --tools tools.json
   
-  # Specify API key directly
-  python data_generator.py --problem "email assistant" --tools tools.json --api-key "sk-..."
+  # Specify count directly (skip prompt)
+  python data_generator.py --problem "calendar agent" --tools tools.json --count 300
+  
+  # Non-interactive mode (use recommended, no prompt)
+  python data_generator.py --problem "calendar agent" --tools tools.json --yes
         """
     )
     
@@ -460,8 +527,14 @@ Examples:
     parser.add_argument(
         "--count", "-n",
         type=int,
-        default=500,
-        help="Number of examples to generate (default: 500)"
+        default=None,
+        help="Number of examples (if not specified, shows interactive prompt)"
+    )
+    
+    parser.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="Skip prompt, use recommended count automatically"
     )
     
     parser.add_argument(
@@ -484,6 +557,7 @@ Examples:
             tools_data = json.load(f)
         
         tools = [ToolSchema.from_mcp(t) for t in tools_data]
+        tool_names = [t.name for t in tools]
         print(f"✅ Loaded {len(tools)} tools from {args.tools}")
     except FileNotFoundError:
         print(f"❌ Error: Tools file not found: {args.tools}")
@@ -492,13 +566,27 @@ Examples:
         print(f"❌ Error: Invalid JSON in tools file: {e}")
         return 1
     
+    # Determine example count
+    if args.count is not None:
+        # User specified count directly
+        num_examples = args.count
+    elif args.yes:
+        # Non-interactive mode, use recommended
+        num_examples = calculate_recommended_examples(len(tools))
+        print(f"\n💡 Using recommended: {num_examples} examples")
+    else:
+        # Interactive prompt
+        num_examples = prompt_for_count(len(tools), tool_names)
+        if num_examples == 0:
+            return 0  # User cancelled
+    
     # Create config
     config = GeneratorConfig(
         problem_statement=args.problem,
         tools=tools,
         api_key=args.api_key,
         api_provider=args.provider,
-        num_examples=args.count,
+        num_examples=num_examples,
         output_path=args.output
     )
     
