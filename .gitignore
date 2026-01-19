@@ -1,12 +1,49 @@
+specs/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+
+# Virtual environments
 myvenv/
+venv/
+.venv/
+env/
+
+# Environment variables
 .env
+.env.local
+
+# Test files and outputs
+test_*.py
+*_test.py
+tests/
+*.jsonl
+test_output*.jsonl
+
+# Generated agent builds (keep examples)
+agent_build/
+my_calendar_agent/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Reference/docs (internal only)
+_reference/
 UserJourneywithMockups.md
 Step 1 - Manual Agent Builder (Cursor Prompt).md
 TRAINING_DATA_GUIDE.md
 
-_reference
-
-
-onsetlab/data_generation/example_tools.json
-onsetlab/data_generation/system_prompt.txt
-onsetlab/data_generation/test_output_v2.jsonl
+# Old data_generation folder (deprecated)
+onsetlab/data_generation/
