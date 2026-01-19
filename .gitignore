@@ -1,4 +1,5 @@
 specs/
+run_pipeline.py
 # Python
 __pycache__/
 *.py[cod]
