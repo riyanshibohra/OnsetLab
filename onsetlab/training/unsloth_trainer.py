@@ -95,10 +95,21 @@ class TrainerConfig:
     
     def get_model_id(self) -> str:
         """Get the Unsloth model ID."""
+        # Check by key first (e.g., "qwen2.5-3b")
         if self.base_model in SUPPORTED_MODELS:
             return SUPPORTED_MODELS[self.base_model]["unsloth_id"]
-        # Assume it's a full unsloth ID
-        return self.base_model
+        
+        # Check by display name (e.g., "Qwen2.5-3B-Instruct")
+        for key, info in SUPPORTED_MODELS.items():
+            if info["name"] == self.base_model:
+                return info["unsloth_id"]
+        
+        # Check if it starts with "unsloth/" (already a valid ID)
+        if self.base_model.startswith("unsloth/"):
+            return self.base_model
+        
+        # Try adding "unsloth/" prefix
+        return f"unsloth/{self.base_model}"
     
     def auto_adjust_for_dataset(self, num_examples: int) -> "TrainerConfig":
         """
@@ -258,14 +269,35 @@ class UnslothTrainer:
         
         return {"messages": messages}
     
+    def _format_to_text(self, example: dict) -> str:
+        """Convert messages to text using tokenizer's chat template."""
+        messages = example.get("messages", [])
+        text = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+        return text
+    
     def _prepare_dataset(self, examples: list):
         """Prepare dataset for training."""
         from datasets import Dataset
         
         formatted = [self._format_for_qwen(ex) for ex in examples]
+        
+        # Convert messages to text using tokenizer
+        for item in formatted:
+            item["text"] = self._format_to_text(item)
+        
         dataset = Dataset.from_list(formatted)
         
-        print(f"✅ Prepared dataset with {len(dataset)} examples")
+        # Debug: show first example
+        if len(formatted) > 0:
+            print(f"\n📝 Sample formatted text (first 500 chars):")
+            print(formatted[0]["text"][:500])
+            print("...")
+        
+        print(f"\n✅ Prepared dataset with {len(dataset)} examples")
         return dataset
     
     def load_model(self, num_examples: int = None):
@@ -324,21 +356,61 @@ class UnslothTrainer:
         return self.model, self.tokenizer
     
     def train(self):
-        """Run the fine-tuning process."""
+        """Run the fine-tuning process using Unsloth's recommended pattern."""
         if self.model is None:
             self.load_model()
         
         from trl import SFTTrainer
-        from transformers import TrainingArguments
+        from transformers import TrainingArguments, DataCollatorForSeq2Seq
         from unsloth import is_bfloat16_supported
+        from datasets import Dataset
         
-        # Load and prepare data
+        # Load training data
         examples = self._load_training_data()
         
         # Auto-adjust hyperparameters based on dataset size
         self.config.auto_adjust_for_dataset(len(examples))
         
-        dataset = self._prepare_dataset(examples)
+        # Format all examples into text strings
+        print("📝 Formatting training data...")
+        formatted_texts = []
+        for ex in examples:
+            # Build messages
+            messages = []
+            
+            # System message
+            system_content = self.system_prompt
+            messages.append({"role": "system", "content": system_content})
+            
+            # User message
+            query = ex.get("query", ex.get("user", ""))
+            messages.append({"role": "user", "content": query})
+            
+            # Assistant response
+            if "tool_call" in ex:
+                tool_call = ex["tool_call"]
+                tool_name = tool_call.get("tool", tool_call.get("name", ""))
+                tool_args = tool_call.get("parameters", tool_call.get("arguments", {}))
+                assistant_content = f'<tool_call>{{"name": "{tool_name}", "arguments": {json.dumps(tool_args)}}}</tool_call>'
+            else:
+                assistant_content = ex.get("response", ex.get("assistant", ""))
+            messages.append({"role": "assistant", "content": assistant_content})
+            
+            # Convert to text using tokenizer
+            text = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=False,
+            )
+            formatted_texts.append(text)
+        
+        # Show sample
+        if formatted_texts:
+            print(f"\n📝 Sample (first 400 chars):\n{formatted_texts[0][:400]}...")
+        
+        # Create dataset with just "text" column
+        dataset = Dataset.from_dict({"text": formatted_texts})
+        print(f"\n✅ Prepared dataset with {len(dataset)} examples")
         
         # Training arguments
         training_args = TrainingArguments(
@@ -357,14 +429,23 @@ class UnslothTrainer:
             seed=42,
         )
         
-        # Create trainer
+        # Unsloth's recommended trainer setup
         print("🚀 Starting training...")
+        
+        # Unsloth requires formatting_func even with pre-formatted data
+        def formatting_prompts_func(batch):
+            """Return the pre-formatted text strings."""
+            return batch["text"]
+        
         self.trainer = SFTTrainer(
             model=self.model,
             tokenizer=self.tokenizer,
             train_dataset=dataset,
-            args=training_args,
+            formatting_func=formatting_prompts_func,
             max_seq_length=self.config.max_seq_length,
+            dataset_num_proc=2,
+            packing=False,
+            args=training_args,
         )
         
         # Train!
