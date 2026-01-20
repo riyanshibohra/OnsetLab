@@ -109,13 +109,14 @@ class Agent:
         with open(os.path.join(save_path, "system_prompt.txt"), "w") as f:
             f.write(self.system_prompt)
         
-        # Copy training data
-        if os.path.exists(self.training_data_path):
-            import shutil
-            shutil.copy(
-                self.training_data_path,
-                os.path.join(save_path, "training_data.jsonl")
-            )
+        # Copy training data (if not already in save location)
+        if self.training_data_path and os.path.exists(self.training_data_path):
+            dest_path = os.path.join(save_path, "training_data.jsonl")
+            src_abs = os.path.abspath(self.training_data_path)
+            dest_abs = os.path.abspath(dest_path)
+            if src_abs != dest_abs:
+                import shutil
+                shutil.copy(self.training_data_path, dest_path)
         
         # Save config
         config = {
