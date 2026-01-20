@@ -1,5 +1,7 @@
 specs/
 run_pipeline.py
+
+colab_test.ipynb
 # Python
 __pycache__/
 *.py[cod]
