@@ -96,3 +96,13 @@ ignore = ["E501"]  # Line too long (handled by formatter)
 [tool.black]
 line-length = 100
 target-version = ["py39", "py310", "py311", "py312"]
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
