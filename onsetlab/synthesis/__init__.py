@@ -16,6 +16,11 @@ from .data_generator import (
     generate_training_data,
     calculate_recommended_examples,
 )
+from .data_generator_v3 import (
+    BatchedDataGenerator,
+    BatchGenConfig,
+    generate_training_data_batched,
+)
 
 __all__ = [
     # Prompt generation
@@ -23,9 +28,13 @@ __all__ = [
     "PromptConfig",
     "generate_system_prompt",
     "generate_minimal_prompt",
-    # Data generation
+    # Data generation (v1 - legacy)
     "DataGenerator",
     "GeneratorConfig",
     "generate_training_data",
     "calculate_recommended_examples",
+    # Data generation (v3 - batched, recommended)
+    "BatchedDataGenerator",
+    "BatchGenConfig",
+    "generate_training_data_batched",
 ]

@@ -41,7 +41,7 @@ from .utils.validator import Validator, ValidationResult, validate_training_data
 
 # Low-level synthesis APIs
 from .synthesis.prompt_generator import PromptGenerator, generate_system_prompt, generate_minimal_prompt
-from .synthesis.data_generator import DataGenerator, GeneratorConfig, generate_training_data
+from .synthesis.data_generator_v3 import BatchedDataGenerator, BatchGenConfig, generate_training_data_batched
 
 # =============================================================================
 # Public API
@@ -69,6 +69,9 @@ __all__ = [
     "validate_training_data",
     "PromptGenerator",
     "generate_system_prompt",
-    "DataGenerator",
-    "generate_training_data",
+    
+    # Batched data generation (v3)
+    "BatchedDataGenerator",
+    "BatchGenConfig",
+    "generate_training_data_batched",
 ]
