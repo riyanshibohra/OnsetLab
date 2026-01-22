@@ -25,7 +25,7 @@ from pathlib import Path
 
 from .utils.schemas import ToolSchema, MCPServerConfig
 from .synthesis.prompt_generator import generate_minimal_prompt, PromptGenerator
-from .synthesis.data_generator import DataGenerator, GeneratorConfig, calculate_recommended_examples
+from .synthesis.data_generator_v3 import BatchedDataGenerator, BatchGenConfig
 from .utils.validator import Validator
 from .training.unsloth_trainer import UnslothTrainer, TrainerConfig, SUPPORTED_MODELS
 from .runtime.packager import AgentPackager, PackageConfig, RuntimeType
@@ -35,12 +35,13 @@ from .runtime.packager import AgentPackager, PackageConfig, RuntimeType
 class BuildConfig:
     """Configuration for the agent building pipeline."""
     
-    # Data generation settings
-    num_examples: int = None  # Auto-calculated if None
+    # Data generation settings (v3 batched generator)
+    num_examples: int = 500  # Total examples to generate
+    batch_size: int = 10     # Examples per LLM call (10x fewer API calls)
     use_llm_for_prompt: bool = False  # Use LLM for richer system prompt
     
-    # Training settings
-    base_model: str = "qwen2.5-3b"  # Best SLM for tool calling (non-gated)
+    # Training settings (only Qwen2.5-3B supported)
+    base_model: str = "qwen2.5-3b"  # Qwen2.5-3B-Instruct
     lora_rank: int = 16
     epochs: int = 3
     skip_training: bool = False  # Set True to skip training (synthesis only)
@@ -195,10 +196,6 @@ class AgentBuilder:
         self.api_key = api_key
         self.config = config or BuildConfig()
         
-        # Auto-calculate num_examples if not specified
-        if self.config.num_examples is None:
-            self.config.num_examples = calculate_recommended_examples(len(tools))
-        
         # Internal state
         self._system_prompt = None
         self._training_data_path = None
@@ -320,39 +317,48 @@ class AgentBuilder:
             print(f"   ✅ Generated template-based prompt ({len(self._system_prompt)} chars)")
     
     def _step_2_generate_data(self):
-        """Step 2: Generate synthetic training data."""
-        print(f"\n📊 Step 2: Generating {self.config.num_examples} training examples...")
+        """Step 2: Generate synthetic training data using batched v3 generator."""
+        print(f"\n📊 Step 2: Generating {self.config.num_examples} training examples (batched)...")
+        print(f"   Batch size: {self.config.batch_size} examples/call")
+        print(f"   Expected API calls: ~{self.config.num_examples // self.config.batch_size}")
         
         # Ensure output directory exists
         os.makedirs(self.config.output_dir, exist_ok=True)
         
-        output_path = os.path.join(self.config.output_dir, "training_data.jsonl")
-        
-        # Create generator config
-        gen_config = GeneratorConfig(
-            problem_statement=self.problem_statement,
-            tools=self.tools,
-            api_key=self.api_key,
-            num_examples=self.config.num_examples,
-            output_path=output_path
+        # Create v3 batched generator config
+        gen_config = BatchGenConfig(
+            total_examples=self.config.num_examples,
+            batch_size=self.config.batch_size,
         )
         
-        # Run generator
-        generator = DataGenerator(gen_config)
-        generator.system_prompt = self._system_prompt  # Use our prompt
-        generator.generate_all()
-        generator.save()
+        # Create v3 generator (flat tool list, no server context)
+        # CRITICAL: Pass the system prompt so it's included in training examples!
+        generator = BatchedDataGenerator(
+            tools=self.tools,
+            problem_statement=self.problem_statement,
+            api_key=self.api_key,
+            config=gen_config,
+            system_prompt=self._system_prompt,  # Include system prompt in training data!
+        )
         
-        self._training_data_path = output_path
-        self._examples_generated = len(generator.examples)
+        # Generate and save
+        output_dir = os.path.join(self.config.output_dir, "data")
+        paths = generator.save(output_dir)
+        
+        # Use train.jsonl as main training data path
+        self._training_data_path = paths.get("train", os.path.join(output_dir, "train.jsonl"))
+        
+        # Count total examples generated
+        total_generated = generator.stats.get("examples_generated", 0)
+        self._examples_generated = total_generated
         
         # Check if we got expected amount
         expected = self.config.num_examples
-        actual = len(generator.examples)
+        actual = total_generated
         
         if actual < expected * 0.5:
             self._warnings.append(f"Only {actual}/{expected} examples generated (target missed by >50%)")
-            print(f"   ⚠️ Only generated {actual}/{expected} examples (many parsing failures)")
+            print(f"   ⚠️ Only generated {actual}/{expected} examples")
         else:
             print(f"   ✅ Generated {actual} examples")
     
@@ -368,9 +374,23 @@ class AgentBuilder:
         print(f"   Invalid: {result.invalid_examples} ❌")
         print(f"   Quality: {result.quality_score:.1f}%")
         
+        # Show error breakdown if there are errors
+        if result.error_counts:
+            print(f"\n   📋 Error breakdown:")
+            for error_type, count in sorted(result.error_counts.items(), key=lambda x: -x[1]):
+                print(f"      - {error_type}: {count}")
+            
+            # Show sample errors (first 3)
+            if result.errors:
+                print(f"\n   📋 Sample errors (first 3):")
+                for error in result.errors[:3]:
+                    print(f"      Line {error.line_number}: {error.message[:80]}")
+        
         if result.quality_score < 80:
             self._warnings.append(f"Low quality: {result.quality_score:.1f}%")
-            print("   ⚠️ Quality is low - consider regenerating")
+            print("\n   ⚠️ Quality is low - consider regenerating")
+        elif result.quality_score >= 90:
+            print("\n   ✅ Good quality - ready for training!")
         
         if result.total_examples == 0:
             self._errors.append("No training examples generated!")
