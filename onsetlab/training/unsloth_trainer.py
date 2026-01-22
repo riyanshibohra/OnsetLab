@@ -13,51 +13,26 @@ from typing import Optional
 from pathlib import Path
 
 
-# Supported non-gated SLMs for tool calling
-# 
-# How to choose:
-#   - qwen2.5-3b (default): Best for tool calling, most accurate
-#   - qwen2.5-1.5b: Faster, still good accuracy
-#   - qwen2.5-0.5b: Fastest, for edge/mobile, basic tasks only
-#   - phi-3.5-mini: Long context (128K), good for complex reasoning
-#   - smollm2-1.7b: Smallest, fastest inference
+# =============================================================================
+# Model Configuration
+# =============================================================================
+# We use Qwen2.5-3B-Instruct as the ONLY supported model.
+# Reasons:
+#   - Best tool calling accuracy among non-gated SLMs
+#   - 3B parameters = good balance of quality vs. speed
+#   - 32K context window = handles complex prompts
+#   - Non-gated = no Hugging Face auth required
 #
+MODEL_CONFIG = {
+    "name": "Qwen2.5-3B-Instruct",
+    "unsloth_id": "unsloth/Qwen2.5-3B-Instruct-bnb-4bit",
+    "size": "3B",
+    "context_length": 32768,
+}
+
+# Keep for backwards compatibility
 SUPPORTED_MODELS = {
-    "qwen2.5-3b": {
-        "name": "Qwen2.5-3B-Instruct",
-        "unsloth_id": "unsloth/Qwen2.5-3B-Instruct-bnb-4bit",
-        "size": "3B",
-        "context_length": 32768,
-        "tool_calling": "excellent",
-    },
-    "qwen2.5-1.5b": {
-        "name": "Qwen2.5-1.5B-Instruct",
-        "unsloth_id": "unsloth/Qwen2.5-1.5B-Instruct-bnb-4bit",
-        "size": "1.5B",
-        "context_length": 32768,
-        "tool_calling": "good",
-    },
-    "qwen2.5-0.5b": {
-        "name": "Qwen2.5-0.5B-Instruct",
-        "unsloth_id": "unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit",
-        "size": "0.5B",
-        "context_length": 32768,
-        "tool_calling": "basic",
-    },
-    "phi-3.5-mini": {
-        "name": "Phi-3.5-mini-instruct",
-        "unsloth_id": "unsloth/Phi-3.5-mini-instruct-bnb-4bit",
-        "size": "3.8B",
-        "context_length": 128000,
-        "tool_calling": "good",
-    },
-    "smollm2-1.7b": {
-        "name": "SmolLM2-1.7B-Instruct",
-        "unsloth_id": "unsloth/SmolLM2-1.7B-Instruct-bnb-4bit",
-        "size": "1.7B",
-        "context_length": 8192,
-        "tool_calling": "basic",
-    },
+    "qwen2.5-3b": MODEL_CONFIG,
 }
 
 DEFAULT_MODEL = "qwen2.5-3b"
@@ -65,10 +40,10 @@ DEFAULT_MODEL = "qwen2.5-3b"
 
 @dataclass
 class TrainerConfig:
-    """Configuration for fine-tuning."""
+    """Configuration for fine-tuning with Qwen2.5-3B-Instruct."""
     
-    # Model settings
-    base_model: str = DEFAULT_MODEL  # Key from SUPPORTED_MODELS or full unsloth ID
+    # Model settings (only Qwen2.5-3B is supported)
+    base_model: str = DEFAULT_MODEL
     
     # LoRA settings (auto-adjusted based on dataset size if None)
     lora_rank: int = None  # Auto: 8 for small, 16 for medium, 32 for large
@@ -360,6 +335,10 @@ class UnslothTrainer:
         if self.model is None:
             self.load_model()
         
+        # Disable Weights & Biases prompting
+        import os
+        os.environ["WANDB_DISABLED"] = "true"
+        
         from trl import SFTTrainer
         from transformers import TrainingArguments, DataCollatorForSeq2Seq
         from unsloth import is_bfloat16_supported
@@ -375,26 +354,30 @@ class UnslothTrainer:
         print("📝 Formatting training data...")
         formatted_texts = []
         for ex in examples:
-            # Build messages
-            messages = []
-            
-            # System message
-            system_content = self.system_prompt
-            messages.append({"role": "system", "content": system_content})
-            
-            # User message
-            query = ex.get("query", ex.get("user", ""))
-            messages.append({"role": "user", "content": query})
-            
-            # Assistant response
-            if "tool_call" in ex:
-                tool_call = ex["tool_call"]
-                tool_name = tool_call.get("tool", tool_call.get("name", ""))
-                tool_args = tool_call.get("parameters", tool_call.get("arguments", {}))
-                assistant_content = f'<tool_call>{{"name": "{tool_name}", "arguments": {json.dumps(tool_args)}}}</tool_call>'
+            # Check if example already has messages format
+            if "messages" in ex:
+                messages = ex["messages"]
             else:
-                assistant_content = ex.get("response", ex.get("assistant", ""))
-            messages.append({"role": "assistant", "content": assistant_content})
+                # Build messages from old format
+                messages = []
+                
+                # System message
+                system_content = self.system_prompt
+                messages.append({"role": "system", "content": system_content})
+                
+                # User message
+                query = ex.get("query", ex.get("user", ""))
+                messages.append({"role": "user", "content": query})
+                
+                # Assistant response
+                if "tool_call" in ex:
+                    tool_call = ex["tool_call"]
+                    tool_name = tool_call.get("tool", tool_call.get("name", ""))
+                    tool_args = tool_call.get("parameters", tool_call.get("arguments", {}))
+                    assistant_content = f'<tool_call>{{"name": "{tool_name}", "arguments": {json.dumps(tool_args)}}}</tool_call>'
+                else:
+                    assistant_content = ex.get("response", ex.get("assistant", ""))
+                messages.append({"role": "assistant", "content": assistant_content})
             
             # Convert to text using tokenizer
             text = self.tokenizer.apply_chat_template(
@@ -409,28 +392,42 @@ class UnslothTrainer:
             print(f"\n📝 Sample (first 400 chars):\n{formatted_texts[0][:400]}...")
         
         # Create dataset with just "text" column
-        dataset = Dataset.from_dict({"text": formatted_texts})
-        print(f"\n✅ Prepared dataset with {len(dataset)} examples")
+        full_dataset = Dataset.from_dict({"text": formatted_texts})
         
-        # Training arguments
+        # Split into train/val (90/10)
+        split_dataset = full_dataset.train_test_split(test_size=0.1, seed=42)
+        train_dataset = split_dataset["train"]
+        val_dataset = split_dataset["test"]
+        
+        print(f"\n✅ Dataset split:")
+        print(f"   📊 Training: {len(train_dataset)} examples")
+        print(f"   📊 Validation: {len(val_dataset)} examples")
+        
+        # Training arguments - now with validation and NO W&B
         training_args = TrainingArguments(
             output_dir=self.config.output_dir,
             num_train_epochs=self.config.epochs,
             per_device_train_batch_size=self.config.batch_size,
+            per_device_eval_batch_size=self.config.batch_size,  # For validation
             gradient_accumulation_steps=self.config.gradient_accumulation_steps,
             learning_rate=self.config.learning_rate,
             warmup_ratio=self.config.warmup_ratio,
             weight_decay=self.config.weight_decay,
             logging_steps=10,
             save_strategy="epoch",
+            eval_strategy="epoch",  # Evaluate at each epoch
             fp16=not is_bfloat16_supported(),
             bf16=is_bfloat16_supported(),
             optim="adamw_8bit",
             seed=42,
+            report_to="none",  # Disable W&B, TensorBoard, etc.
+            load_best_model_at_end=True,  # Keep best model based on val loss
+            metric_for_best_model="eval_loss",
+            greater_is_better=False,  # Lower loss is better
         )
         
         # Unsloth's recommended trainer setup
-        print("🚀 Starting training...")
+        print("🚀 Starting training (with validation)...")
         
         # Unsloth requires formatting_func even with pre-formatted data
         def formatting_prompts_func(batch):
@@ -440,7 +437,8 @@ class UnslothTrainer:
         self.trainer = SFTTrainer(
             model=self.model,
             tokenizer=self.tokenizer,
-            train_dataset=dataset,
+            train_dataset=train_dataset,
+            eval_dataset=val_dataset,  # Add validation set!
             formatting_func=formatting_prompts_func,
             max_seq_length=self.config.max_seq_length,
             dataset_num_proc=2,
@@ -449,7 +447,29 @@ class UnslothTrainer:
         )
         
         # Train!
-        self.trainer.train()
+        train_result = self.trainer.train()
+        
+        # Print final loss comparison
+        print("\n" + "=" * 50)
+        print("📊 Training Summary")
+        print("=" * 50)
+        
+        # Get final metrics
+        final_train_loss = train_result.training_loss
+        print(f"   Final Training Loss: {final_train_loss:.4f}")
+        
+        # Run final evaluation
+        eval_metrics = self.trainer.evaluate()
+        final_val_loss = eval_metrics.get("eval_loss", 0)
+        print(f"   Final Validation Loss: {final_val_loss:.4f}")
+        
+        # Check for overfitting
+        if final_val_loss > final_train_loss * 1.5:
+            print(f"   ⚠️ Warning: Possible overfitting (val_loss >> train_loss)")
+        elif final_val_loss < final_train_loss * 1.2:
+            print(f"   ✅ Good fit: validation and training loss are close")
+        
+        print("=" * 50)
         print("✅ Training complete!")
         
         return self.trainer

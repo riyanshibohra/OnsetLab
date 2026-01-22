@@ -74,12 +74,15 @@ class Validator:
     """
     
     # Common placeholders that indicate incomplete generation
+    # NOTE: Be careful not to match valid JSON structures!
     PLACEHOLDER_PATTERNS = [
-        r'\{\{.*?\}\}',           # {{date}}, {{time}}, etc.
-        r'<[A-Z_]+>',             # <TODAY>, <USER_NAME>, etc.
-        r'\[.*?\]',               # [NAME], [DATE], etc. (but not in JSON)
-        r'<current_date.*?>',     # <current_date_start>
-        r'<.*?_placeholder>',     # <any_placeholder>
+        r'\{\{[^{}]+\}\}',        # {{date}}, {{time}} - but not nested JSON
+        r'<[A-Z][A-Z_]{2,}>',     # <TODAY>, <USER_NAME> - all caps, 3+ chars
+        r'\[[A-Z][A-Z_]*\]',      # [NAME], [DATE] - all caps in brackets (not JSON arrays)
+        r'<[a-z_]+_placeholder>', # <any_placeholder>
+        r'INSERT_\w+_HERE',       # INSERT_VALUE_HERE patterns
+        r'YOUR_\w+_HERE',         # YOUR_EMAIL_HERE patterns
+        r'PLACEHOLDER',           # literal PLACEHOLDER
     ]
     
     def __init__(
@@ -110,6 +113,25 @@ class Validator:
             raise ValueError("Must provide either 'tools' or 'tools_path'")
         
         self.tool_names = set(self.tools.keys())
+        
+        # Build normalized name mapping for fuzzy matching
+        self._name_map = {}
+        for name in self.tool_names:
+            # Map normalized versions to actual name
+            normalized = self._normalize_name(name)
+            self._name_map[normalized] = name
+            self._name_map[name] = name  # Also keep original
+    
+    def _normalize_name(self, name: str) -> str:
+        """Normalize tool name for matching (handles underscores, hyphens, case)."""
+        return name.lower().replace("-", "_").replace(" ", "_")
+    
+    def _find_tool(self, name: str) -> Optional[str]:
+        """Find actual tool name from possibly-varied input."""
+        if name in self.tool_names:
+            return name
+        normalized = self._normalize_name(name)
+        return self._name_map.get(normalized)
     
     def _extract_tool_call(self, assistant_content: str) -> Optional[dict]:
         """
@@ -164,16 +186,21 @@ class Validator:
             ))
             return errors
         
-        if tool_name not in self.tool_names:
+        # Try fuzzy matching for tool name
+        actual_tool_name = self._find_tool(tool_name)
+        if actual_tool_name is None:
+            # Show closest matches for debugging
+            close_matches = [n for n in self.tool_names if self._normalize_name(tool_name)[:5] in self._normalize_name(n)]
+            hint = f" (close: {close_matches[:3]})" if close_matches else ""
             errors.append(ValidationError(
                 line_number=line_num,
                 error_type="unknown_tool",
-                message=f"Unknown tool: '{tool_name}'. Valid tools: {', '.join(sorted(self.tool_names))}"
+                message=f"Unknown tool: '{tool_name}'{hint}"
             ))
             return errors
         
-        # Get tool schema
-        tool_schema = self.tools[tool_name]
+        # Get tool schema using actual (normalized) name
+        tool_schema = self.tools[actual_tool_name]
         input_schema = tool_schema.get("inputSchema", {})
         properties = input_schema.get("properties", {})
         required = input_schema.get("required", [])
