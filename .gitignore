@@ -1,7 +1,7 @@
 specs/
 run_pipeline.py
-
 colab_test.ipynb
+tests/
 # Python
 __pycache__/
 *.py[cod]
@@ -24,12 +24,15 @@ env/
 .env
 .env.local
 
-# Test files and outputs
-test_*.py
-*_test.py
-tests/
+# Test outputs (not the tests themselves!)
 *.jsonl
 test_output*.jsonl
+test_data_v2/
+test_data_v3/
+
+# Standalone test scripts (not pytest tests)
+test_data_gen_v2.py
+test_data_gen_v3.py
 
 # Generated agent builds (keep examples)
 agent_build/
