@@ -9,6 +9,9 @@ Ensures:
 3. Required parameters are present
 4. JSON is valid
 5. No placeholders or template variables
+6. Multi-turn format is correct (role sequences)
+7. Tool results are valid JSON
+8. Final message is a summary (not hanging tool call)
 
 Filters out bad examples and reports quality score.
 """
@@ -16,7 +19,7 @@ Filters out bad examples and reports quality score.
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Optional, Union, List
 from pathlib import Path
 
 from .schemas import ToolSchema
@@ -28,6 +31,7 @@ class ValidationError:
     line_number: int
     error_type: str
     message: str
+    severity: str = "error"  # "error" or "warning"
     example_preview: str = ""
 
 
@@ -37,10 +41,16 @@ class ValidationResult:
     total_examples: int = 0
     valid_examples: int = 0
     invalid_examples: int = 0
-    errors: list[ValidationError] = field(default_factory=list)
+    warnings_count: int = 0
+    errors: List[ValidationError] = field(default_factory=list)
     
     # Error counts by type
     error_counts: dict = field(default_factory=dict)
+    
+    # Statistics
+    single_tool_count: int = 0
+    multi_tool_count: int = 0
+    edge_case_count: int = 0
     
     @property
     def quality_score(self) -> float:
@@ -58,6 +68,8 @@ class ValidationResult:
         """Add an error and update counts."""
         self.errors.append(error)
         self.error_counts[error.error_type] = self.error_counts.get(error.error_type, 0) + 1
+        if error.severity == "warning":
+            self.warnings_count += 1
 
 
 class Validator:
@@ -248,9 +260,15 @@ class Validator:
         
         return errors
     
-    def _validate_example(self, example: dict, line_num: int) -> list[ValidationError]:
-        """Validate a single training example."""
+    def _validate_example(self, example: dict, line_num: int) -> tuple[List[ValidationError], str]:
+        """
+        Validate a single training example.
+        
+        Returns:
+            (errors, example_type) where example_type is 'single_tool', 'multi_tool', or 'edge_case'
+        """
         errors = []
+        example_type = "edge_case"  # Default
         
         # Check structure
         if "messages" not in example:
@@ -259,38 +277,184 @@ class Validator:
                 error_type="invalid_structure",
                 message="Example missing 'messages' field"
             ))
-            return errors
+            return errors, example_type
         
         messages = example["messages"]
         
-        # Find assistant messages with tool calls
-        for msg in messages:
-            if msg.get("role") != "assistant":
-                continue
-            
+        # Check for empty messages
+        if not messages:
+            errors.append(ValidationError(
+                line_number=line_num,
+                error_type="empty_messages",
+                message="Messages array is empty"
+            ))
+            return errors, example_type
+        
+        # Extract roles for sequence validation
+        roles = [m.get("role") for m in messages]
+        
+        # Check minimum structure: should have at least system, user, assistant
+        if len(messages) < 3:
+            errors.append(ValidationError(
+                line_number=line_num,
+                error_type="insufficient_messages",
+                message=f"Example has only {len(messages)} messages (need at least 3: system, user, assistant)",
+                severity="warning"
+            ))
+        
+        # Validate role sequence
+        role_errors = self._validate_role_sequence(roles, line_num)
+        errors.extend(role_errors)
+        
+        # Count tool calls and tool results to determine type
+        tool_call_count = 0
+        tool_result_count = roles.count("tool")
+        
+        # Validate each message
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "")
             content = msg.get("content", "")
             
-            # Check for placeholders in content
-            if self._has_placeholders(content):
+            # Check for empty content
+            if not content and role != "tool":  # Tool results can be empty in edge cases
                 errors.append(ValidationError(
                     line_number=line_num,
-                    error_type="placeholder_found",
-                    message=f"Assistant message contains placeholder",
-                    example_preview=content[:100]
+                    error_type="empty_content",
+                    message=f"Message {i} ({role}) has empty content",
+                    severity="warning"
                 ))
             
-            # If it's a tool call, validate it
-            if "<tool_call>" in content:
-                tool_call = self._extract_tool_call(content)
-                if tool_call is None:
+            # Validate based on role
+            if role == "assistant":
+                # Check for placeholders
+                if self._has_placeholders(content):
                     errors.append(ValidationError(
                         line_number=line_num,
-                        error_type="invalid_json",
-                        message="Could not parse tool call JSON",
+                        error_type="placeholder_found",
+                        message=f"Assistant message contains placeholder",
                         example_preview=content[:100]
                     ))
-                else:
-                    errors.extend(self._validate_tool_call(tool_call, line_num))
+                
+                # If it's a tool call, validate it
+                if "<tool_call>" in content:
+                    tool_call_count += 1
+                    tool_call = self._extract_tool_call(content)
+                    if tool_call is None:
+                        errors.append(ValidationError(
+                            line_number=line_num,
+                            error_type="invalid_json",
+                            message="Could not parse tool call JSON",
+                            example_preview=content[:100]
+                        ))
+                    else:
+                        errors.extend(self._validate_tool_call(tool_call, line_num))
+            
+            elif role == "tool":
+                # Validate tool result is valid JSON
+                tool_errors = self._validate_tool_result(content, line_num, i)
+                errors.extend(tool_errors)
+            
+            elif role == "user":
+                # Check for placeholders in user message
+                if self._has_placeholders(content):
+                    errors.append(ValidationError(
+                        line_number=line_num,
+                        error_type="placeholder_found",
+                        message=f"User message contains placeholder",
+                        example_preview=content[:100]
+                    ))
+        
+        # Determine example type
+        if tool_result_count > 0:
+            example_type = "multi_tool"
+        elif tool_call_count > 0:
+            example_type = "single_tool"
+        else:
+            example_type = "edge_case"
+        
+        # For multi-turn, check that it ends with a summary (not a hanging tool call)
+        if tool_result_count > 0:
+            last_assistant = None
+            for msg in reversed(messages):
+                if msg.get("role") == "assistant":
+                    last_assistant = msg.get("content", "")
+                    break
+            
+            if last_assistant and "<tool_call>" in last_assistant:
+                errors.append(ValidationError(
+                    line_number=line_num,
+                    error_type="hanging_tool_call",
+                    message="Multi-turn example ends with tool call instead of summary",
+                    severity="warning"
+                ))
+        
+        return errors, example_type
+    
+    def _validate_role_sequence(self, roles: List[str], line_num: int) -> List[ValidationError]:
+        """Validate that role sequence is valid."""
+        errors = []
+        
+        # Valid roles
+        valid_roles = {"system", "user", "assistant", "tool"}
+        
+        for i, role in enumerate(roles):
+            if role not in valid_roles:
+                errors.append(ValidationError(
+                    line_number=line_num,
+                    error_type="invalid_role",
+                    message=f"Unknown role: '{role}'"
+                ))
+        
+        # Check sequence rules
+        for i in range(1, len(roles)):
+            prev_role = roles[i - 1]
+            curr_role = roles[i]
+            
+            # Tool result must follow assistant (tool call)
+            if curr_role == "tool" and prev_role != "assistant":
+                errors.append(ValidationError(
+                    line_number=line_num,
+                    error_type="invalid_sequence",
+                    message=f"'tool' role must follow 'assistant', but follows '{prev_role}'"
+                ))
+            
+            # After tool result, must be assistant
+            if prev_role == "tool" and curr_role != "assistant":
+                errors.append(ValidationError(
+                    line_number=line_num,
+                    error_type="invalid_sequence",
+                    message=f"After 'tool' must come 'assistant', but got '{curr_role}'"
+                ))
+        
+        return errors
+    
+    def _validate_tool_result(self, content: str, line_num: int, msg_index: int) -> List[ValidationError]:
+        """Validate a tool result message."""
+        errors = []
+        
+        if not content:
+            errors.append(ValidationError(
+                line_number=line_num,
+                error_type="empty_tool_result",
+                message=f"Tool result at message {msg_index} is empty",
+                severity="warning"
+            ))
+            return errors
+        
+        # Try to parse as JSON (tool results should be JSON)
+        try:
+            json.loads(content)
+        except json.JSONDecodeError:
+            # Not JSON - could be plain text error message, which is OK
+            # Only warn if it looks like it should be JSON
+            if content.strip().startswith("{") or content.strip().startswith("["):
+                errors.append(ValidationError(
+                    line_number=line_num,
+                    error_type="invalid_tool_result_json",
+                    message=f"Tool result looks like JSON but failed to parse",
+                    example_preview=content[:100],
+                    severity="warning"
+                ))
         
         return errors
     
@@ -328,13 +492,28 @@ class Validator:
                     continue
                 
                 # Validate example
-                errors = self._validate_example(example, line_num)
+                errors, example_type = self._validate_example(example, line_num)
                 
-                if errors:
+                # Count by type
+                if example_type == "single_tool":
+                    result.single_tool_count += 1
+                elif example_type == "multi_tool":
+                    result.multi_tool_count += 1
+                else:
+                    result.edge_case_count += 1
+                
+                # Only count as invalid if there are actual errors (not just warnings)
+                actual_errors = [e for e in errors if e.severity == "error"]
+                
+                if actual_errors:
                     for error in errors:
                         result.add_error(error)
                     result.invalid_examples += 1
                 else:
+                    # Add warnings but still count as valid
+                    for error in errors:
+                        if error.severity == "warning":
+                            result.add_error(error)
                     result.valid_examples += 1
         
         return result
@@ -376,13 +555,28 @@ class Validator:
                     result.invalid_examples += 1
                     continue
                 
-                errors = self._validate_example(example, line_num)
+                errors, example_type = self._validate_example(example, line_num)
                 
-                if errors:
+                # Count by type
+                if example_type == "single_tool":
+                    result.single_tool_count += 1
+                elif example_type == "multi_tool":
+                    result.multi_tool_count += 1
+                else:
+                    result.edge_case_count += 1
+                
+                # Only count as invalid if there are actual errors (not just warnings)
+                actual_errors = [e for e in errors if e.severity == "error"]
+                
+                if actual_errors:
                     for error in errors:
                         result.add_error(error)
                     result.invalid_examples += 1
                 else:
+                    # Valid - add to output
+                    for error in errors:
+                        if error.severity == "warning":
+                            result.add_error(error)
                     result.valid_examples += 1
                     valid_examples.append(example)
         
@@ -404,7 +598,15 @@ class Validator:
         print(f"   Total examples:   {result.total_examples}")
         print(f"   Valid examples:   {result.valid_examples} ✅")
         print(f"   Invalid examples: {result.invalid_examples} ❌")
+        if result.warnings_count > 0:
+            print(f"   Warnings:         {result.warnings_count} ⚠️")
         print(f"   Quality score:    {result.quality_score:.1f}%")
+        
+        # Example type breakdown
+        print(f"\n📁 Example Types:")
+        print(f"   Single-tool:  {result.single_tool_count}")
+        print(f"   Multi-tool:   {result.multi_tool_count}")
+        print(f"   Edge cases:   {result.edge_case_count}")
         
         # Quality indicator
         if result.quality_score >= 95:
@@ -416,20 +618,41 @@ class Validator:
         else:
             print(f"\n   ❌ Poor quality - regenerate training data")
         
-        # Error breakdown
+        # Error breakdown (separate errors from warnings)
         if result.error_counts:
-            print(f"\n🔍 Error breakdown:")
-            for error_type, count in sorted(result.error_counts.items(), key=lambda x: -x[1]):
-                print(f"   {error_type}: {count}")
+            # Separate errors and warnings
+            errors_only = {k: v for k, v in result.error_counts.items() 
+                          if not any(e.error_type == k and e.severity == "warning" for e in result.errors)}
+            warnings_only = {k: v for k, v in result.error_counts.items() 
+                           if any(e.error_type == k and e.severity == "warning" for e in result.errors)}
+            
+            if errors_only:
+                print(f"\n❌ Errors:")
+                for error_type, count in sorted(errors_only.items(), key=lambda x: -x[1]):
+                    print(f"   {error_type}: {count}")
+            
+            if warnings_only:
+                print(f"\n⚠️ Warnings:")
+                for error_type, count in sorted(warnings_only.items(), key=lambda x: -x[1]):
+                    print(f"   {error_type}: {count}")
         
-        # Sample errors (first 5)
-        if result.errors:
+        # Sample errors (first 5 actual errors, then warnings)
+        actual_errors = [e for e in result.errors if e.severity == "error"]
+        warnings = [e for e in result.errors if e.severity == "warning"]
+        
+        if actual_errors:
             print(f"\n📋 Sample errors (showing first 5):")
-            for error in result.errors[:5]:
+            for error in actual_errors[:5]:
                 print(f"\n   Line {error.line_number}: [{error.error_type}]")
                 print(f"   {error.message}")
                 if error.example_preview:
                     print(f"   Preview: {error.example_preview[:80]}...")
+        
+        if warnings and len(actual_errors) < 3:
+            print(f"\n📋 Sample warnings (showing first 3):")
+            for warning in warnings[:3]:
+                print(f"\n   Line {warning.line_number}: [{warning.error_type}]")
+                print(f"   {warning.message}")
         
         print("\n" + "=" * 60)
 
