@@ -47,9 +47,12 @@ class BuildConfig:
     prompt_detail_level: str = "minimal"
     
     # Training settings (only Qwen2.5-3B supported)
+    # Set to None for auto-adjustment based on dataset size and tool count
     base_model: str = "qwen2.5-3b"  # Qwen2.5-3B-Instruct
-    lora_rank: int = 16
-    epochs: int = 3
+    lora_rank: int = None      # Auto: 8 (small) → 16 (medium) → 32 (large)
+    lora_alpha: int = None     # Auto: matches rank (or 2x for small datasets)
+    epochs: int = None         # Auto: 5 (small) → 3 (medium) → 2 (large)
+    learning_rate: float = None  # Auto: 1e-4 (small) → 2e-4 (medium/large)
     skip_training: bool = False  # Set True to skip training (synthesis only)
     
     # Output settings
@@ -82,6 +85,9 @@ class Agent:
     # Build status
     is_trained: bool = False
     is_packaged: bool = False
+    
+    # Evaluation results (from test.jsonl)
+    eval_results: dict = None  # {accuracy, correct, total, per_tool, errors}
     
     def export(self, output_path: str = None) -> str:
         """
@@ -284,8 +290,11 @@ class AgentBuilder:
         # Internal state
         self._system_prompt = None
         self._training_data_path = None
+        self._validation_data_path = None  # For stratified validation
+        self._test_data_path = None        # For final evaluation
         self._model_path = None
         self._package_path = None
+        self._eval_results = None          # Evaluation metrics
         
         # Build status tracking
         self._errors = []
@@ -335,6 +344,7 @@ class AgentBuilder:
             package_path=self._package_path,
             is_trained=self._model_path is not None,
             is_packaged=self._package_path is not None,
+            eval_results=self._eval_results,  # Accuracy metrics from test.jsonl
         )
         
         # Print final status
@@ -360,6 +370,11 @@ class AgentBuilder:
         print(f"  📊 Examples: {self._examples_generated}")
         if self._model_path:
             print(f"  🧠 Model: {self._model_path}")
+        if self._eval_results:
+            acc = self._eval_results.get("accuracy", 0)
+            correct = self._eval_results.get("correct", 0)
+            total = self._eval_results.get("total", 0)
+            print(f"  📊 Test Accuracy: {acc:.1f}% ({correct}/{total})")
         if self._package_path:
             print(f"  📦 Package: {self._package_path}")
         
@@ -436,6 +451,12 @@ class AgentBuilder:
         # Use train.jsonl as main training data path
         self._training_data_path = paths.get("train", os.path.join(output_dir, "train.jsonl"))
         
+        # Store validation path for stratified split (preserves category balance)
+        self._validation_data_path = paths.get("validation", os.path.join(output_dir, "validation.jsonl"))
+        
+        # Store test path for final evaluation (held-out accuracy measurement)
+        self._test_data_path = paths.get("test", os.path.join(output_dir, "test.jsonl"))
+        
         # Count total examples generated
         total_generated = generator.stats.get("examples_generated", 0)
         self._examples_generated = total_generated
@@ -500,22 +521,34 @@ class AgentBuilder:
         else:
             print(f"   Model: {model_key}")
         
-        print(f"   LoRA rank: {self.config.lora_rank}")
-        print(f"   Epochs: {self.config.epochs}")
+        # Show what will be auto-adjusted
+        if self.config.lora_rank is None:
+            print(f"   LoRA rank: auto (based on dataset size)")
+        else:
+            print(f"   LoRA rank: {self.config.lora_rank}")
+        
+        if self.config.epochs is None:
+            print(f"   Epochs: auto (based on dataset size)")
+        else:
+            print(f"   Epochs: {self.config.epochs}")
         
         try:
             # Create trainer config
+            # Pass None values to enable auto-adjustment in TrainerConfig
             trainer_config = TrainerConfig(
                 base_model=self.config.base_model,
-                lora_rank=self.config.lora_rank,
-                epochs=self.config.epochs,
+                lora_rank=self.config.lora_rank,      # None = auto-adjust
+                lora_alpha=self.config.lora_alpha,    # None = auto-adjust
+                epochs=self.config.epochs,             # None = auto-adjust
+                learning_rate=self.config.learning_rate,  # None = auto-adjust
                 output_dir=os.path.join(self.config.output_dir, "model"),
                 save_gguf=self.config.save_gguf,
             )
             
-            # Create trainer
+            # Create trainer with validation data path for stratified split
             trainer = UnslothTrainer(
                 training_data_path=self._training_data_path,
+                validation_data_path=self._validation_data_path,  # Stratified split!
                 system_prompt=self._system_prompt,
                 tools=self.tools,
                 config=trainer_config,
@@ -528,12 +561,29 @@ class AgentBuilder:
                 self._warnings.append("No GPU - training skipped")
                 return
             
-            # Run training
+            # Run training (auto-adjustment happens inside train())
             trainer.train()
             saved_paths = trainer.save()
             
             self._model_path = saved_paths.get("gguf") or saved_paths.get("lora")
             print(f"   ✅ Model saved to: {self._model_path}")
+            
+            # Run evaluation on held-out test set
+            if self._test_data_path and os.path.exists(self._test_data_path):
+                print("\n📊 Step 4b: Evaluating on held-out test set...")
+                try:
+                    self._eval_results = trainer.evaluate(self._test_data_path)
+                    if self._eval_results["accuracy"] >= 80:
+                        print(f"   ✅ Good accuracy: {self._eval_results['accuracy']:.1f}%")
+                    elif self._eval_results["accuracy"] >= 60:
+                        print(f"   ⚠️ Moderate accuracy: {self._eval_results['accuracy']:.1f}%")
+                        self._warnings.append(f"Model accuracy is {self._eval_results['accuracy']:.1f}% - consider more training data")
+                    else:
+                        print(f"   ⚠️ Low accuracy: {self._eval_results['accuracy']:.1f}%")
+                        self._warnings.append(f"Low accuracy ({self._eval_results['accuracy']:.1f}%) - model may need improvement")
+                except Exception as e:
+                    print(f"   ⚠️ Evaluation failed: {e}")
+                    self._warnings.append(f"Could not evaluate: {e}")
             
         except ImportError as e:
             print(f"\n   ⚠️ Missing dependencies for training: {e}")

@@ -86,20 +86,29 @@ class TrainerConfig:
         # Try adding "unsloth/" prefix
         return f"unsloth/{self.base_model}"
     
-    def auto_adjust_for_dataset(self, num_examples: int) -> "TrainerConfig":
+    def auto_adjust_for_dataset(self, num_examples: int, num_tools: int = None) -> "TrainerConfig":
         """
-        Auto-adjust hyperparameters based on dataset size.
+        Auto-adjust hyperparameters based on dataset size and tool count.
         
         Research-backed recommendations:
         - Small (<100): Conservative LR, more epochs, lower rank
         - Medium (100-500): Balanced settings
-        - Large (500+): Can be more aggressive
+        - Large (500-1500): Slightly higher rank, fewer epochs
+        
+        Tool count also affects rank (capped at 32 given max 1500 examples):
+        - ≤15 tools: No boost needed
+        - >15 tools: Small boost (+4 per 5 tools over 15)
+        
+        Max rank is 32 because:
+        - Data generator caps at 1500 examples
+        - Tool calling is structured (not creative)
+        - Higher rank = overfitting risk with limited data
         """
         if num_examples < 100:
             # Small dataset: conservative to avoid overfitting
             defaults = {
                 "lora_rank": 8,
-                "lora_alpha": 16,  # 2x rank for small data
+                "lora_alpha": 16,  # 2x rank for small data (more regularization)
                 "epochs": 5,
                 "learning_rate": 1e-4,  # Lower LR
             }
@@ -114,14 +123,22 @@ class TrainerConfig:
             }
             size_category = "medium"
         else:
-            # Large dataset: can be more aggressive
+            # Large dataset (500-1500): can use higher rank
             defaults = {
-                "lora_rank": 32,
-                "lora_alpha": 32,
+                "lora_rank": 24,  # Start at 24 for large (not 32)
+                "lora_alpha": 24,
                 "epochs": 2,
                 "learning_rate": 2e-4,
             }
             size_category = "large"
+        
+        # Adjust rank based on tool count (more tools = more complexity)
+        # Only boost if >15 tools, max rank is 32
+        if num_tools is not None and num_tools > 15:
+            # Conservative boost: +4 per 5 tools over 15
+            rank_boost = min(8, (num_tools - 15) // 5 * 4)
+            defaults["lora_rank"] = min(32, defaults["lora_rank"] + rank_boost)
+            defaults["lora_alpha"] = defaults["lora_rank"]
         
         # Apply defaults only if not explicitly set
         if self.lora_rank is None:
@@ -133,7 +150,8 @@ class TrainerConfig:
         if self.learning_rate is None:
             self.learning_rate = defaults["learning_rate"]
         
-        print(f"   📊 Dataset size: {num_examples} ({size_category})")
+        tool_info = f", {num_tools} tools" if num_tools else ""
+        print(f"   📊 Dataset size: {num_examples} ({size_category}{tool_info})")
         print(f"   🔧 Auto-tuned: rank={self.lora_rank}, epochs={self.epochs}, lr={self.learning_rate}")
         
         return self
@@ -145,7 +163,8 @@ class UnslothTrainer:
     
     Usage:
         trainer = UnslothTrainer(
-            training_data_path="training_data.jsonl",
+            training_data_path="train.jsonl",
+            validation_data_path="validation.jsonl",  # Optional
             system_prompt="You are a calendar assistant...",
             config=TrainerConfig()
         )
@@ -159,8 +178,10 @@ class UnslothTrainer:
         system_prompt: str,
         tools: list = None,
         config: TrainerConfig = None,
+        validation_data_path: str = None,  # NEW: Use pre-split validation
     ):
         self.training_data_path = training_data_path
+        self.validation_data_path = validation_data_path
         self.system_prompt = system_prompt
         self.tools = tools or []
         self.config = config or TrainerConfig()
@@ -192,61 +213,37 @@ class UnslothTrainer:
             self.has_gpu = False
     
     def _load_training_data(self) -> list:
-        """Load and format training data from JSONL."""
+        """Load training data from JSONL."""
+        return self._load_data_from_path(self.training_data_path)
+    
+    def _load_data_from_path(self, path: str) -> list:
+        """Load data from a JSONL file."""
         examples = []
-        with open(self.training_data_path, 'r') as f:
+        with open(path, 'r') as f:
             for line in f:
                 if line.strip():
                     examples.append(json.loads(line))
-        print(f"📊 Loaded {len(examples)} training examples")
         return examples
     
-    def _format_for_qwen(self, example: dict) -> dict:
+    def _format_example_to_text(self, example: dict) -> str:
         """
-        Format a training example for Qwen's chat template with tool calling.
+        Convert an example to text using tokenizer's chat template.
         
-        Qwen uses special tokens for tool calls:
-        <|im_start|>user
-        Query here
-        <|im_end|>
-        <|im_start|>assistant
-        <tool_call>{"name": "tool", "arguments": {...}}</tool_call>
-        <|im_end|>
+        Handles:
+        - New format: {"messages": [...]} with role: system/user/assistant/tool
+        - Old format: {"query": ..., "tool_call": {...}}
+        
+        Multi-turn format is fully supported (role: tool messages).
         """
-        messages = []
-        
-        # System message with tools
-        system_content = self.system_prompt
-        if self.tools:
-            tools_json = json.dumps([t.to_dict() if hasattr(t, 'to_dict') else t for t in self.tools], indent=2)
-            system_content += f"\n\nAvailable tools:\n{tools_json}"
-        
-        messages.append({"role": "system", "content": system_content})
-        
-        # User message
-        query = example.get("query", example.get("user", ""))
-        messages.append({"role": "user", "content": query})
-        
-        # Assistant response
-        if "tool_call" in example:
-            # Tool call response
-            tool_call = example["tool_call"]
-            tool_name = tool_call.get("tool", tool_call.get("name", ""))
-            tool_args = tool_call.get("parameters", tool_call.get("arguments", {}))
-            
-            # Qwen tool call format
-            assistant_content = f'<tool_call>{{"name": "{tool_name}", "arguments": {json.dumps(tool_args)}}}</tool_call>'
+        # Check if already in messages format
+        if "messages" in example:
+            messages = example["messages"]
         else:
-            # Regular response (no tool)
-            assistant_content = example.get("response", example.get("assistant", ""))
+            # Build messages from old format (backward compatibility)
+            messages = self._convert_old_format(example)
         
-        messages.append({"role": "assistant", "content": assistant_content})
-        
-        return {"messages": messages}
-    
-    def _format_to_text(self, example: dict) -> str:
-        """Convert messages to text using tokenizer's chat template."""
-        messages = example.get("messages", [])
+        # Use tokenizer's chat template
+        # This handles Qwen's special tokens correctly
         text = self.tokenizer.apply_chat_template(
             messages,
             tokenize=False,
@@ -254,33 +251,38 @@ class UnslothTrainer:
         )
         return text
     
-    def _prepare_dataset(self, examples: list):
-        """Prepare dataset for training."""
-        from datasets import Dataset
+    def _convert_old_format(self, example: dict) -> list:
+        """Convert old format to messages format (backward compatibility)."""
+        messages = []
         
-        formatted = [self._format_for_qwen(ex) for ex in examples]
+        # System message
+        messages.append({"role": "system", "content": self.system_prompt})
         
-        # Convert messages to text using tokenizer
-        for item in formatted:
-            item["text"] = self._format_to_text(item)
+        # User message
+        query = example.get("query", example.get("user", ""))
+        messages.append({"role": "user", "content": query})
         
-        dataset = Dataset.from_list(formatted)
+        # Assistant response
+        if "tool_call" in example:
+            tool_call = example["tool_call"]
+            tool_name = tool_call.get("tool", tool_call.get("name", ""))
+            tool_args = tool_call.get("parameters", tool_call.get("arguments", {}))
+            # Use our format: {"tool": ..., "parameters": ...}
+            assistant_content = f'<tool_call>\n{json.dumps({"tool": tool_name, "parameters": tool_args})}\n</tool_call>'
+        else:
+            assistant_content = example.get("response", example.get("assistant", ""))
         
-        # Debug: show first example
-        if len(formatted) > 0:
-            print(f"\n📝 Sample formatted text (first 500 chars):")
-            print(formatted[0]["text"][:500])
-            print("...")
+        messages.append({"role": "assistant", "content": assistant_content})
         
-        print(f"\n✅ Prepared dataset with {len(dataset)} examples")
-        return dataset
+        return messages
     
-    def load_model(self, num_examples: int = None):
+    def load_model(self, num_examples: int = None, num_tools: int = None):
         """
         Load the base model with Unsloth.
         
         Args:
             num_examples: If provided, auto-adjusts LoRA params based on dataset size
+            num_tools: If provided, adjusts rank based on tool count
         """
         if not self.has_gpu:
             raise RuntimeError("GPU required for training. Please run in Colab.")
@@ -294,15 +296,17 @@ class UnslothTrainer:
                 "Or run in Google Colab with GPU."
             )
         
-        # Auto-adjust if we know dataset size
-        if num_examples:
-            self.config.auto_adjust_for_dataset(num_examples)
-        else:
-            # Use defaults if not auto-adjusted
-            if self.config.lora_rank is None:
-                self.config.lora_rank = 16
-            if self.config.lora_alpha is None:
-                self.config.lora_alpha = 16
+        # Ensure LoRA config is set (should already be done by train())
+        # This handles the case where load_model() is called directly
+        if self.config.lora_rank is None or self.config.lora_alpha is None:
+            if num_examples:
+                self.config.auto_adjust_for_dataset(num_examples, num_tools)
+            else:
+                # Use safe defaults if not auto-adjusted
+                if self.config.lora_rank is None:
+                    self.config.lora_rank = 16
+                if self.config.lora_alpha is None:
+                    self.config.lora_alpha = 16
         
         model_id = self.config.get_model_id()
         print(f"🔄 Loading model: {model_id}")
@@ -332,76 +336,65 @@ class UnslothTrainer:
     
     def train(self):
         """Run the fine-tuning process using Unsloth's recommended pattern."""
-        if self.model is None:
-            self.load_model()
-        
         # Disable Weights & Biases prompting
         import os
         os.environ["WANDB_DISABLED"] = "true"
         
         from trl import SFTTrainer
-        from transformers import TrainingArguments, DataCollatorForSeq2Seq
+        from transformers import TrainingArguments
         from unsloth import is_bfloat16_supported
         from datasets import Dataset
         
-        # Load training data
-        examples = self._load_training_data()
+        # Load training data FIRST (need size for auto-adjustment)
+        train_examples = self._load_training_data()
         
-        # Auto-adjust hyperparameters based on dataset size
-        self.config.auto_adjust_for_dataset(len(examples))
+        # Load validation data (if provided separately)
+        val_examples = None
+        if self.validation_data_path:
+            val_examples = self._load_data_from_path(self.validation_data_path)
+            print(f"📊 Loaded {len(val_examples)} validation examples")
+        
+        # Auto-adjust hyperparameters BEFORE loading model
+        # (LoRA rank/alpha need to be set before applying adapters)
+        num_tools = len(self.tools) if self.tools else None
+        self.config.auto_adjust_for_dataset(len(train_examples), num_tools)
+        
+        # NOW load model with correct LoRA settings
+        if self.model is None:
+            self.load_model(num_examples=len(train_examples), num_tools=num_tools)
         
         # Format all examples into text strings
         print("📝 Formatting training data...")
-        formatted_texts = []
-        for ex in examples:
-            # Check if example already has messages format
-            if "messages" in ex:
-                messages = ex["messages"]
-            else:
-                # Build messages from old format
-                messages = []
-                
-                # System message
-                system_content = self.system_prompt
-                messages.append({"role": "system", "content": system_content})
-                
-                # User message
-                query = ex.get("query", ex.get("user", ""))
-                messages.append({"role": "user", "content": query})
-                
-                # Assistant response
-                if "tool_call" in ex:
-                    tool_call = ex["tool_call"]
-                    tool_name = tool_call.get("tool", tool_call.get("name", ""))
-                    tool_args = tool_call.get("parameters", tool_call.get("arguments", {}))
-                    assistant_content = f'<tool_call>{{"name": "{tool_name}", "arguments": {json.dumps(tool_args)}}}</tool_call>'
-                else:
-                    assistant_content = ex.get("response", ex.get("assistant", ""))
-                messages.append({"role": "assistant", "content": assistant_content})
-            
-            # Convert to text using tokenizer
-            text = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=False,
-            )
-            formatted_texts.append(text)
+        train_texts = [self._format_example_to_text(ex) for ex in train_examples]
         
         # Show sample
-        if formatted_texts:
-            print(f"\n📝 Sample (first 400 chars):\n{formatted_texts[0][:400]}...")
+        if train_texts:
+            print(f"\n📝 Sample (first 500 chars):\n{train_texts[0][:500]}...")
         
-        # Create dataset with just "text" column
-        full_dataset = Dataset.from_dict({"text": formatted_texts})
+        # Create training dataset
+        train_dataset = Dataset.from_dict({"text": train_texts})
         
-        # Split into train/val (90/10)
-        split_dataset = full_dataset.train_test_split(test_size=0.1, seed=42)
-        train_dataset = split_dataset["train"]
-        val_dataset = split_dataset["test"]
+        # Handle validation data
+        if val_examples:
+            # Use provided validation data (preserves stratification!)
+            val_texts = [self._format_example_to_text(ex) for ex in val_examples]
+            val_dataset = Dataset.from_dict({"text": val_texts})
+            print(f"\n✅ Using pre-split data (stratified):")
+        else:
+            # Fall back to splitting if no validation file provided
+            split_dataset = train_dataset.train_test_split(test_size=0.1, seed=42)
+            train_dataset = split_dataset["train"]
+            val_dataset = split_dataset["test"]
+            print(f"\n✅ Auto-split data (90/10):")
         
-        print(f"\n✅ Dataset split:")
         print(f"   📊 Training: {len(train_dataset)} examples")
         print(f"   📊 Validation: {len(val_dataset)} examples")
+        
+        # Safety check: ensure all training params are set (should be done by auto_adjust)
+        if self.config.epochs is None:
+            self.config.epochs = 3  # Safe default
+        if self.config.learning_rate is None:
+            self.config.learning_rate = 2e-4  # Safe default
         
         # Training arguments - now with validation and NO W&B
         training_args = TrainingArguments(
@@ -552,6 +545,144 @@ class UnslothTrainer:
             response = response.split("assistant")[-1].strip()
         
         return response
+    
+    def evaluate(self, test_data_path: str) -> dict:
+        """
+        Evaluate model on held-out test set.
+        
+        Measures tool prediction accuracy:
+        - Did the model call the correct tool?
+        - Did it avoid hallucinating tools not in training?
+        
+        Args:
+            test_data_path: Path to test.jsonl (from data generator)
+        
+        Returns:
+            dict with:
+            - accuracy: Overall % correct
+            - correct: Number of correct predictions
+            - total: Total test examples
+            - per_tool: Accuracy breakdown by tool
+            - errors: List of incorrect predictions for analysis
+        """
+        if self.model is None:
+            raise RuntimeError("No model loaded. Run train() first.")
+        
+        from unsloth import FastLanguageModel
+        import re
+        
+        # Enable inference mode
+        FastLanguageModel.for_inference(self.model)
+        
+        # Load test data
+        test_examples = self._load_data_from_path(test_data_path)
+        
+        print(f"\n📊 Evaluating on {len(test_examples)} test examples...")
+        
+        # Track results
+        correct = 0
+        total = 0
+        per_tool = {}  # tool -> {"correct": x, "total": y}
+        errors = []
+        
+        for i, example in enumerate(test_examples):
+            messages = example.get("messages", [])
+            
+            # Find user query and expected tool
+            user_query = None
+            expected_tool = None
+            
+            for msg in messages:
+                if msg["role"] == "user":
+                    user_query = msg["content"]
+                elif msg["role"] == "assistant":
+                    # Extract expected tool from assistant response
+                    content = msg["content"]
+                    if "<tool_call>" in content or '"tool"' in content:
+                        # Try to parse tool name
+                        match = re.search(r'"tool"\s*:\s*"([^"]+)"', content)
+                        if match:
+                            expected_tool = match.group(1)
+                            break
+            
+            # Skip edge cases (no tool expected)
+            if not user_query or not expected_tool:
+                continue
+            
+            total += 1
+            
+            # Initialize per-tool tracking
+            if expected_tool not in per_tool:
+                per_tool[expected_tool] = {"correct": 0, "total": 0}
+            per_tool[expected_tool]["total"] += 1
+            
+            # Generate prediction
+            try:
+                prediction = self.test(user_query)
+                
+                # Extract predicted tool
+                predicted_tool = None
+                if "<tool_call>" in prediction or '"tool"' in prediction:
+                    match = re.search(r'"tool"\s*:\s*"([^"]+)"', prediction)
+                    if match:
+                        predicted_tool = match.group(1)
+                
+                # Check if correct
+                if predicted_tool == expected_tool:
+                    correct += 1
+                    per_tool[expected_tool]["correct"] += 1
+                else:
+                    errors.append({
+                        "query": user_query[:100],
+                        "expected": expected_tool,
+                        "predicted": predicted_tool,
+                    })
+                    
+            except Exception as e:
+                errors.append({
+                    "query": user_query[:100],
+                    "expected": expected_tool,
+                    "error": str(e),
+                })
+            
+            # Progress indicator
+            if (i + 1) % 10 == 0:
+                print(f"   ... {i + 1}/{len(test_examples)}")
+        
+        # Calculate accuracy
+        accuracy = (correct / total * 100) if total > 0 else 0
+        
+        # Calculate per-tool accuracy
+        tool_accuracy = {}
+        for tool, stats in per_tool.items():
+            if stats["total"] > 0:
+                tool_accuracy[tool] = {
+                    "accuracy": stats["correct"] / stats["total"] * 100,
+                    "correct": stats["correct"],
+                    "total": stats["total"],
+                }
+        
+        # Print summary
+        print("\n" + "=" * 50)
+        print("📊 Evaluation Results")
+        print("=" * 50)
+        print(f"   Overall Accuracy: {accuracy:.1f}% ({correct}/{total})")
+        print(f"\n   Per-Tool Breakdown:")
+        for tool, stats in sorted(tool_accuracy.items(), key=lambda x: -x[1]["accuracy"]):
+            print(f"      {tool}: {stats['accuracy']:.0f}% ({stats['correct']}/{stats['total']})")
+        
+        if errors:
+            print(f"\n   ⚠️ {len(errors)} incorrect predictions (see errors list)")
+        
+        print("=" * 50)
+        
+        return {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+            "per_tool": tool_accuracy,
+            "errors": errors[:10],  # Return first 10 errors for debugging
+        }
 
 
 def get_training_notebook_code(
