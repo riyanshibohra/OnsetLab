@@ -23,8 +23,15 @@ __version__ = "0.1.0"
 # =============================================================================
 from .builder import AgentBuilder, Agent, BuildConfig
 
-# Core schemas for defining tools and MCP servers
-from .utils.schemas import ToolSchema, MCPServerConfig, load_tools_from_file, load_tools_from_json
+# Core schemas for defining tools and servers
+from .utils.schemas import (
+    ToolSchema, 
+    MCPServerConfig,
+    APIToolSchema,      # NEW: For direct API endpoints
+    APIServerConfig,    # NEW: For API-based services
+    load_tools_from_file, 
+    load_tools_from_json
+)
 
 # =============================================================================
 # Advanced APIs (for users who want more control)
@@ -53,6 +60,8 @@ __all__ = [
     "BuildConfig",
     "ToolSchema",
     "MCPServerConfig",
+    "APIToolSchema",     # For direct API endpoints
+    "APIServerConfig",   # For API-based services
     
     # Helpers
     "load_tools_from_file",

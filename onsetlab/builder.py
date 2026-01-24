@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 from pathlib import Path
 
-from .utils.schemas import ToolSchema, MCPServerConfig
+from .utils.schemas import ToolSchema, MCPServerConfig, APIServerConfig, APIToolSchema
 from .synthesis.prompt_generator import generate_minimal_prompt, PromptGenerator
 from .synthesis.data_generator import BatchedDataGenerator, BatchGenConfig
 from .utils.validator import Validator
@@ -76,6 +76,7 @@ class Agent:
     training_data_path: str
     tools: list[ToolSchema]
     mcp_servers: list[MCPServerConfig]
+    api_servers: list = None  # NEW: List of APIServerConfig for direct API services
     
     # Paths to generated files
     output_dir: str = None
@@ -267,8 +268,9 @@ class AgentBuilder:
         self,
         problem_statement: str,
         tools: list[ToolSchema],
-        mcp_servers: list[MCPServerConfig],
-        api_key: str,
+        mcp_servers: list[MCPServerConfig] = None,
+        api_servers: list = None,  # List[APIServerConfig] for direct API services
+        api_key: str = None,
         config: BuildConfig = None,
     ):
         """
@@ -276,16 +278,25 @@ class AgentBuilder:
         
         Args:
             problem_statement: Description of what the agent should do
-            tools: List of ToolSchema objects (from MCP discovery)
-            mcp_servers: List of MCPServerConfig objects
+            tools: List of ToolSchema objects (from MCP discovery or API specs)
+            mcp_servers: List of MCPServerConfig for MCP-based services
+            api_servers: List of APIServerConfig for direct REST API services
             api_key: OpenAI or Anthropic API key for synthesis
             config: Optional BuildConfig for customization
+        
+        Note:
+            You can use mcp_servers, api_servers, or both. At least one must be provided.
         """
         self.problem_statement = problem_statement
         self.tools = tools
-        self.mcp_servers = mcp_servers
+        self.mcp_servers = mcp_servers or []
+        self.api_servers = api_servers or []
         self.api_key = api_key
         self.config = config or BuildConfig()
+        
+        # Validate at least one server type is provided
+        if not self.mcp_servers and not self.api_servers:
+            raise ValueError("At least one of mcp_servers or api_servers must be provided")
         
         # Internal state
         self._system_prompt = None
@@ -339,6 +350,7 @@ class AgentBuilder:
             training_data_path=self._training_data_path,
             tools=self.tools,
             mcp_servers=self.mcp_servers,
+            api_servers=self.api_servers,  # NEW: Direct API services
             output_dir=self.config.output_dir,
             model_path=self._model_path,
             package_path=self._package_path,
@@ -616,12 +628,13 @@ class AgentBuilder:
                 include_readme=True,
             )
             
-            # Create packager
+            # Create packager (supports both MCP and API servers)
             packager = AgentPackager(
                 agent_name=self.config.agent_name,
                 system_prompt=self._system_prompt,
                 tools=self.tools,
                 mcp_servers=self.mcp_servers,
+                api_servers=self.api_servers,  # NEW: Direct API services
                 model_path=self._model_path,
                 config=package_config,
             )

@@ -26,9 +26,9 @@ class RuntimeType(Enum):
 class PackageConfig:
     """Configuration for agent packaging."""
     runtime: RuntimeType = RuntimeType.BOTH
-    agent_name: str = "my_agent"
+    agent_name: str = "onset-agent"  # Branded default name
     output_dir: str = "./agent_package"
-    include_training_data: bool = False  # Include training data in package
+    include_training_data: bool = False  # Include train.jsonl for debugging/sharing
     include_readme: bool = True
 
 
@@ -36,9 +36,13 @@ class AgentPackager:
     """
     Packages a trained agent for deployment.
     
+    Supports two tool backends:
+    1. MCP Servers - For services with MCP protocol support
+    2. API Servers - For services with direct REST APIs (no MCP)
+    
     Generates:
     - For Ollama: Modelfile, config.yaml
-    - For Python: agent.py, requirements.txt
+    - For Python: agent.py, tools.py (API wrappers), requirements.txt
     - Common: README.md, system_prompt.txt, mcp_config.json
     """
     
@@ -47,7 +51,8 @@ class AgentPackager:
         agent_name: str,
         system_prompt: str,
         tools: list,
-        mcp_servers,  # Can be list or dict
+        mcp_servers=None,  # Can be list or dict of MCPServerConfig
+        api_servers: list = None,  # List of APIServerConfig
         model_path: str = None,
         config: PackageConfig = None,
     ):
@@ -56,6 +61,7 @@ class AgentPackager:
         self.tools = tools
         # Normalize mcp_servers to list (handles both dict and list input)
         self.mcp_servers = self._normalize_mcp_servers(mcp_servers)
+        self.api_servers = api_servers or []  # NEW: API-based services
         self.model_path = model_path
         self.config = config or PackageConfig(agent_name=agent_name)
     
@@ -173,65 +179,64 @@ class AgentPackager:
         print(f"   📄 system_prompt.txt")
     
     def _write_mcp_config(self, output_dir: str):
-        """Write MCP server configuration with tool whitelist."""
+        """
+        Write configuration for both MCP servers and API servers.
+        
+        The agent uses this to know:
+        1. Which MCP servers to connect to
+        2. Which API servers are available
+        3. Which tools are whitelisted (trained on)
+        """
         config = {
             "mcpServers": {},
-            "allowed_tools": []
+            "apiServers": {},  # NEW: API-based services
+            "allowed_tools": [],
+            "mcp_tools": [],   # Tools that use MCP
+            "api_tools": []    # Tools that use direct API
         }
         
-        # Package name mapping (shorthand -> actual npm package)
-        PACKAGE_MAP = {
-            "github-mcp-server": "@modelcontextprotocol/server-github",
-            "slack-mcp-server": "slack-mcp-server",  # korotovsky's package
-            "filesystem-mcp-server": "@modelcontextprotocol/server-filesystem",
-        }
-        
-        # Tool patterns to identify which server they belong to
-        GITHUB_TOOLS = {"issue", "pull_request", "repository", "file_contents", "commit", "branch", "fork", "star"}
-        SLACK_TOOLS = {"conversations", "channels", "chat", "message", "users", "search_messages"}
-        
-        # Categorize tools by server
-        tool_lists = {name: [] for name in ["github", "slack", "other"]}
-        for tool in self.tools:
-            tool_dict = tool.to_dict() if hasattr(tool, 'to_dict') else tool
-            tool_name = tool_dict.get("name", "").lower()
-            
-            if any(kw in tool_name for kw in GITHUB_TOOLS):
-                tool_lists["github"].append(tool_dict.get("name", ""))
-            elif any(kw in tool_name for kw in SLACK_TOOLS):
-                tool_lists["slack"].append(tool_dict.get("name", ""))
-            else:
-                tool_lists["other"].append(tool_dict.get("name", ""))
-        
-        # Build server configs
+        # Build MCP server configs
         for server in self.mcp_servers:
             server_dict = server.to_dict() if hasattr(server, 'to_dict') else server
-            package = server_dict.get("package", "")
             
-            # Get actual npm package name
-            actual_package = PACKAGE_MAP.get(package, package)
-            
-            # Determine server name
-            name = package.split("/")[-1].replace("-mcp-server", "").replace("-mcp", "").replace("server-", "")
-            if "github" in package.lower():
-                name = "github"
-            elif "slack" in package.lower():
-                name = "slack"
-            
-            # Get tools for this specific server
-            server_tools = tool_lists.get(name, [])
-            if not server_tools:
-                # Fallback: include "other" tools
-                server_tools = tool_lists.get("other", [])
+            name = server_dict.get("name", "server")
+            command = server_dict.get("command", "npx")
+            args = server_dict.get("args", [])
+            env_var = server_dict.get("env_var", "API_KEY")
+            server_tools = server_dict.get("tools", [])
             
             config["mcpServers"][name] = {
-                "command": "npx",
-                "args": ["-y", actual_package],
+                "command": command,
+                "args": args,
                 "env": {
-                    server_dict.get("env_var", "API_KEY"): f"${{{server_dict.get('env_var', 'API_KEY')}}}"
+                    env_var: f"${{{env_var}}}"
                 },
                 "tools": server_tools
             }
+            
+            # Track MCP tools
+            config["mcp_tools"].extend(server_tools)
+        
+        # Build API server configs
+        for server in self.api_servers:
+            server_dict = server.to_dict() if hasattr(server, 'to_dict') else server
+            
+            name = server_dict.get("name", "api")
+            base_url = server_dict.get("base_url", "")
+            auth_env_var = server_dict.get("auth_env_var", "API_KEY")
+            server_tools = [
+                t.get("name") if isinstance(t, dict) else t.name 
+                for t in server_dict.get("tools", [])
+            ]
+            
+            config["apiServers"][name] = {
+                "base_url": base_url,
+                "auth_env_var": auth_env_var,
+                "tools": server_tools
+            }
+            
+            # Track API tools
+            config["api_tools"].extend(server_tools)
         
         # Collect all allowed tools (only tools we trained on)
         for tool in self.tools:
@@ -241,10 +246,14 @@ class AgentPackager:
         path = os.path.join(output_dir, "mcp_config.json")
         with open(path, "w") as f:
             json.dump(config, f, indent=2)
-        print(f"   📄 mcp_config.json")
+        print(f"   📄 mcp_config.json (MCP: {len(config['mcp_tools'])}, API: {len(config['api_tools'])} tools)")
     
     def _write_env_example(self, output_dir: str):
-        """Write .env.example file with all required credentials."""
+        """
+        Write .env.example file with all required credentials.
+        
+        GENERIC: Uses MCPServerConfig and APIServerConfig data directly.
+        """
         env_content = f"""# {self.agent_name} - Environment Variables
 # ============================================
 # Copy this file to .env and fill in your credentials:
@@ -255,40 +264,77 @@ class AgentPackager:
 # ============================================
 
 """
-        for server in self.mcp_servers:
-            server_dict = server.to_dict() if hasattr(server, 'to_dict') else server
-            package = server_dict.get("package", "unknown")
-            env_var = server_dict.get("env_var", "API_KEY")
-            auth_type = server_dict.get("auth_type", "token")
-            description = server_dict.get("description", "")
-            setup_url = server_dict.get("setup_url", "")
+        # MCP Servers
+        if self.mcp_servers:
+            env_content += "# ==========================================\n"
+            env_content += "# MCP SERVERS\n"
+            env_content += "# ==========================================\n\n"
             
-            env_content += f"# {package}\n"
-            if description:
-                env_content += f"# {description}\n"
+            for server in self.mcp_servers:
+                server_dict = server.to_dict() if hasattr(server, 'to_dict') else server
+                package = server_dict.get("package", "unknown")
+                env_var = server_dict.get("env_var", "API_KEY")
+                auth_type = server_dict.get("auth_type", "token")
+                description = server_dict.get("description", "")
+                setup_url = server_dict.get("setup_url", "")
+                example_value = server_dict.get("example_value", "")
+                
+                env_content += f"# {package}\n"
+                if description:
+                    env_content += f"# {description}\n"
+                
+                # Add helpful hints based on auth type
+                if auth_type == "token":
+                    env_content += f"# Get your token from the provider's settings page\n"
+                elif auth_type == "oauth":
+                    env_content += f"# Path to OAuth credentials JSON file\n"
+                elif auth_type == "connection_string":
+                    env_content += f"# Format: protocol://user:password@host:port/database\n"
+                elif auth_type == "cookie":
+                    env_content += f"# Extract from browser cookies (see provider docs)\n"
+                
+                if setup_url:
+                    env_content += f"# Setup guide: {setup_url}\n"
+                
+                if example_value:
+                    env_content += f'{env_var}={example_value}\n\n'
+                else:
+                    env_content += f'{env_var}=your_{env_var.lower()}_here\n\n'
+        
+        # API Servers
+        if self.api_servers:
+            env_content += "# ==========================================\n"
+            env_content += "# API SERVERS (Direct REST API)\n"
+            env_content += "# ==========================================\n\n"
             
-            # Add helpful hints based on auth type
-            if auth_type == "token":
-                env_content += f"# Get your token from the provider's settings page\n"
-            elif auth_type == "oauth":
-                env_content += f"# Path to OAuth credentials JSON file\n"
-            elif auth_type == "connection_string":
-                env_content += f"# Format: protocol://user:password@host:port/database\n"
-            
-            if setup_url:
-                env_content += f"# Setup guide: {setup_url}\n"
-            
-            # Add example value
-            if "github" in package.lower():
-                env_content += f'{env_var}=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n\n'
-            elif "google" in package.lower() or "oauth" in auth_type:
-                env_content += f'{env_var}=/path/to/credentials.json\n\n'
-            elif "postgres" in package.lower():
-                env_content += f'{env_var}=postgresql://user:password@localhost:5432/mydb\n\n'
-            elif "slack" in package.lower():
-                env_content += f'{env_var}=xoxb-xxxxxxxxxxxx-xxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx\n\n'
-            else:
-                env_content += f'{env_var}=your_{env_var.lower()}_here\n\n'
+            for server in self.api_servers:
+                server_dict = server.to_dict() if hasattr(server, 'to_dict') else server
+                name = server_dict.get("name", "api")
+                env_var = server_dict.get("auth_env_var", "API_KEY")
+                auth_type = server_dict.get("auth_type", "bearer")
+                description = server_dict.get("description", "")
+                setup_url = server_dict.get("setup_url", "")
+                example_value = server_dict.get("example_value", "")
+                
+                env_content += f"# {name.upper()} API\n"
+                if description:
+                    env_content += f"# {description}\n"
+                
+                # Add helpful hints based on auth type
+                if auth_type == "bearer":
+                    env_content += f"# Bearer token for Authorization header\n"
+                elif auth_type == "api_key":
+                    env_content += f"# API key (added to header)\n"
+                elif auth_type == "basic":
+                    env_content += f"# Format: username:password (will be base64 encoded)\n"
+                
+                if setup_url:
+                    env_content += f"# Setup guide: {setup_url}\n"
+                
+                if example_value:
+                    env_content += f'{env_var}={example_value}\n\n'
+                else:
+                    env_content += f'{env_var}=your_{env_var.lower()}_here\n\n'
         
         path = os.path.join(output_dir, ".env.example")
         with open(path, "w") as f:
@@ -409,8 +455,9 @@ Thumbs.db
     
     def _write_ollama_files(self, output_dir: str):
         """Write Ollama-specific files."""
-        # Modelfile
-        gguf_path = self.model_path or "./model.gguf"
+        # Modelfile - always use ./model.gguf since _copy_model() copies it there
+        # This is relative to the package directory, not the original training location
+        gguf_path = "./model.gguf"
         modelfile = f'''# Ollama Modelfile for {self.agent_name}
 # 
 # Usage:
@@ -433,8 +480,8 @@ PARAMETER stop "</tool_call>"
         print(f"   📄 Modelfile (Ollama)")
     
     def _write_python_files(self, output_dir: str):
-        """Write Python runtime files with MCP-based tool execution."""
-        # Write tools.json
+        """Write Python runtime files with MCP + API-based tool execution."""
+        # Write tools.json (all tool schemas for reference)
         tools_json = json.dumps(
             [t.to_dict() if hasattr(t, 'to_dict') else t for t in self.tools],
             indent=2
@@ -444,6 +491,10 @@ PARAMETER stop "</tool_call>"
             f.write(tools_json)
         print(f"   📄 tools.json")
         
+        # Write api_tools.py if there are API servers
+        if self.api_servers:
+            self._write_api_tools(output_dir)
+        
         # Load agent template
         template_path = os.path.join(os.path.dirname(__file__), "agent_template.py")
         with open(template_path, "r") as f:
@@ -452,451 +503,258 @@ PARAMETER stop "</tool_call>"
         # Replace placeholders
         agent_py = agent_py.replace("{agent_name}", self.agent_name)
         
+        # Add API tools import if needed
+        if self.api_servers:
+            api_import = "from api_tools import API_TOOLS, call_api_tool"
+            agent_py = agent_py.replace(
+                "# {api_tools_import}",
+                api_import
+            )
+            agent_py = agent_py.replace("{has_api_tools}", "True")
+        else:
+            agent_py = agent_py.replace("# {api_tools_import}", "")
+            agent_py = agent_py.replace("{has_api_tools}", "False")
+        
         # Write agent.py
         agent_path = os.path.join(output_dir, "agent.py")
         with open(agent_path, "w") as f:
             f.write(agent_py)
         os.chmod(agent_path, 0o755)
-        print(f"   📄 agent.py (MCP-based)")
+        print(f"   📄 agent.py (MCP + API)")
         
         # Write requirements.txt
         requirements = '''# Requirements for running the agent
 llama-cpp-python>=0.2.0
 python-dotenv>=1.0.0
+requests>=2.28.0
 '''
         req_path = os.path.join(output_dir, "requirements.txt")
         with open(req_path, "w") as f:
             f.write(requirements)
         print(f"   📄 requirements.txt")
     
-    def _write_python_files_OLD_UNUSED(self, output_dir: str):
-        """OLD METHOD - NOT USED. Kept for reference."""
-        agent_py = f'''#!/usr/bin/env python3
-"""
-{self.agent_name} - AI Agent with Real Tool Execution
-======================================================
-Auto-generated by OnsetLab
+    def _write_api_tools(self, output_dir: str):
+        """
+        Generate api_tools.py with wrapper functions for direct API calls.
+        
+        For each APIServerConfig, generates:
+        1. Auth setup for that service
+        2. Function for each API endpoint
+        3. Registration in API_TOOLS dict
+        """
+        code = f'''"""
+API Tools - Auto-generated by OnsetLab
+======================================
+Direct API wrappers for services without MCP servers.
 
-Usage:
-    python agent.py --interactive
-    python agent.py "Show me open issues in facebook/react"
+DO NOT EDIT - regenerate by rebuilding the agent.
 """
 
-import argparse
-import json
 import os
-import re
-import sys
-from dotenv import load_dotenv
+import json
+import requests
+from typing import Any, Dict, Optional
 
 # Load environment variables
+from dotenv import load_dotenv
 load_dotenv()
 
-# Configuration
-AGENT_NAME = "{self.agent_name}"
-MODEL_PATH = "./model"
-SYSTEM_PROMPT = """{self.system_prompt}"""
-
-TOOLS = {tools_json}
-
-
-# ============================================================
-# TOOL EXECUTORS - Real API calls to GitHub, Slack, etc.
-# ============================================================
-
-import requests
-
-def execute_tool(tool_name: str, params: dict) -> str:
-    """Execute a tool and return the result."""
-    
-    # GitHub Tools
-    if tool_name == "list_issues":
-        return github_list_issues(params)
-    elif tool_name == "get_issue":
-        return github_get_issue(params)
-    elif tool_name == "create_issue":
-        return github_create_issue(params)
-    elif tool_name == "add_issue_comment":
-        return github_add_comment(params)
-    elif tool_name == "search_repositories":
-        return github_search_repos(params)
-    elif tool_name == "get_file_contents":
-        return github_get_file(params)
-    elif tool_name == "create_pull_request":
-        return github_create_pr(params)
-    elif tool_name == "list_commits":
-        return github_list_commits(params)
-    
-    # Slack Tools
-    elif tool_name == "post_message":
-        return slack_post_message(params)
-    elif tool_name == "list_channels":
-        return slack_list_channels(params)
-    
-    else:
-        return f"Unknown tool: {{tool_name}}"
-
-
-# ============================================================
-# GitHub API Functions
-# ============================================================
-
-def github_headers():
-    token = os.getenv("GITHUB_TOKEN")
-    if not token:
-        return {{"error": "GITHUB_TOKEN not set in .env"}}
-    return {{"Authorization": f"token {{token}}", "Accept": "application/vnd.github.v3+json"}}
-
-def github_list_issues(params):
-    owner = params.get("owner")
-    repo = params.get("repo")
-    state = params.get("state", "open")
-    
-    url = f"https://api.github.com/repos/{{owner}}/{{repo}}/issues"
-    resp = requests.get(url, headers=github_headers(), params={{"state": state, "per_page": 10}})
-    
-    if resp.status_code != 200:
-        return f"Error: {{resp.status_code}} - {{resp.text[:200]}}"
-    
-    issues = resp.json()
-    result = f"Found {{len(issues)}} issues in {{owner}}/{{repo}}:\\n"
-    for i in issues[:5]:
-        result += f"  #{{i['number']}} {{i['title']}} [{{i['state']}}]\\n"
-    return result
-
-def github_get_issue(params):
-    owner = params.get("owner")
-    repo = params.get("repo")
-    issue_number = params.get("issue_number")
-    
-    url = f"https://api.github.com/repos/{{owner}}/{{repo}}/issues/{{issue_number}}"
-    resp = requests.get(url, headers=github_headers())
-    
-    if resp.status_code != 200:
-        return f"Error: {{resp.status_code}}"
-    
-    issue = resp.json()
-    return f"Issue #{{issue['number']}}: {{issue['title']}}\\nState: {{issue['state']}}\\nBody: {{issue['body'][:300] if issue['body'] else 'No description'}}"
-
-def github_create_issue(params):
-    owner = params.get("owner")
-    repo = params.get("repo")
-    title = params.get("title")
-    body = params.get("body", "")
-    
-    url = f"https://api.github.com/repos/{{owner}}/{{repo}}/issues"
-    resp = requests.post(url, headers=github_headers(), json={{"title": title, "body": body}})
-    
-    if resp.status_code != 201:
-        return f"Error creating issue: {{resp.status_code}} - {{resp.text[:200]}}"
-    
-    issue = resp.json()
-    return f"Created issue #{{issue['number']}}: {{issue['html_url']}}"
-
-def github_add_comment(params):
-    owner = params.get("owner")
-    repo = params.get("repo")
-    issue_number = params.get("issue_number")
-    body = params.get("body")
-    
-    url = f"https://api.github.com/repos/{{owner}}/{{repo}}/issues/{{issue_number}}/comments"
-    resp = requests.post(url, headers=github_headers(), json={{"body": body}})
-    
-    if resp.status_code != 201:
-        return f"Error: {{resp.status_code}}"
-    
-    return f"Comment added to issue #{{issue_number}}"
-
-def github_search_repos(params):
-    query = params.get("query")
-    sort = params.get("sort", "stars")
-    
-    url = "https://api.github.com/search/repositories"
-    resp = requests.get(url, headers=github_headers(), params={{"q": query, "sort": sort, "per_page": 5}})
-    
-    if resp.status_code != 200:
-        return f"Error: {{resp.status_code}}"
-    
-    repos = resp.json().get("items", [])
-    result = f"Found {{len(repos)}} repositories:\\n"
-    for r in repos:
-        result += f"  ⭐ {{r['stargazers_count']:,}} - {{r['full_name']}}: {{r['description'][:50] if r['description'] else ''}}...\\n"
-    return result
-
-def github_get_file(params):
-    owner = params.get("owner")
-    repo = params.get("repo")
-    path = params.get("path")
-    branch = params.get("branch", "main")
-    
-    url = f"https://api.github.com/repos/{{owner}}/{{repo}}/contents/{{path}}"
-    resp = requests.get(url, headers=github_headers(), params={{"ref": branch}})
-    
-    if resp.status_code != 200:
-        return f"Error: {{resp.status_code}}"
-    
-    import base64
-    content = base64.b64decode(resp.json().get("content", "")).decode("utf-8")
-    return f"File {{path}}:\\n{{content[:500]}}..."
-
-def github_create_pr(params):
-    owner = params.get("owner")
-    repo = params.get("repo")
-    title = params.get("title")
-    body = params.get("body", "")
-    head = params.get("head")
-    base = params.get("base", "main")
-    
-    url = f"https://api.github.com/repos/{{owner}}/{{repo}}/pulls"
-    resp = requests.post(url, headers=github_headers(), json={{
-        "title": title, "body": body, "head": head, "base": base
-    }})
-    
-    if resp.status_code != 201:
-        return f"Error: {{resp.status_code}} - {{resp.text[:200]}}"
-    
-    pr = resp.json()
-    return f"Created PR #{{pr['number']}}: {{pr['html_url']}}"
-
-def github_list_commits(params):
-    owner = params.get("owner")
-    repo = params.get("repo")
-    sha = params.get("sha", "main")
-    
-    url = f"https://api.github.com/repos/{{owner}}/{{repo}}/commits"
-    resp = requests.get(url, headers=github_headers(), params={{"sha": sha, "per_page": 5}})
-    
-    if resp.status_code != 200:
-        return f"Error: {{resp.status_code}}"
-    
-    commits = resp.json()
-    result = "Recent commits:\\n"
-    for c in commits:
-        msg = c["commit"]["message"].split("\\n")[0][:50]
-        result += f"  {{c['sha'][:7]}} - {{msg}}\\n"
-    return result
-
-
-# ============================================================
-# Slack API Functions
-# ============================================================
-
-def slack_headers():
-    token = os.getenv("SLACK_BOT_TOKEN")
-    if not token:
-        return {{"error": "SLACK_BOT_TOKEN not set in .env"}}
-    return {{"Authorization": f"Bearer {{token}}", "Content-Type": "application/json"}}
-
-def slack_post_message(params):
-    channel = params.get("channel", "").lstrip("#")
-    text = params.get("text")
-    
-    url = "https://slack.com/api/chat.postMessage"
-    resp = requests.post(url, headers=slack_headers(), json={{"channel": channel, "text": text}})
-    
-    data = resp.json()
-    if not data.get("ok"):
-        return f"Error: {{data.get('error', 'Unknown error')}}"
-    
-    return f"Message posted to #{{channel}}"
-
-def slack_list_channels(params):
-    url = "https://slack.com/api/conversations.list"
-    resp = requests.get(url, headers=slack_headers(), params={{"types": "public_channel", "limit": 20}})
-    
-    data = resp.json()
-    if not data.get("ok"):
-        return f"Error: {{data.get('error', 'Unknown error')}}"
-    
-    channels = data.get("channels", [])
-    result = f"Found {{len(channels)}} channels:\\n"
-    for c in channels[:10]:
-        result += f"  #{{c['name']}}\\n"
-    return result
-
-
-# ============================================================
-# Model Loading & Generation
-# ============================================================
-
-def load_model():
-    """Load the GGUF model using llama-cpp-python."""
-    try:
-        from llama_cpp import Llama
-    except ImportError:
-        print("Error: llama-cpp-python not installed.")
-        print("Run: pip install llama-cpp-python")
-        sys.exit(1)
-    
-    # Find GGUF file
-    gguf_file = None
-    model_dir = "./model"
-    if os.path.isdir(model_dir):
-        for f in os.listdir(model_dir):
-            if f.endswith(".gguf"):
-                gguf_file = os.path.join(model_dir, f)
-                break
-    
-    if not gguf_file:
-        print("Error: No .gguf file found in ./model/")
-        sys.exit(1)
-    
-    print(f"Loading {{gguf_file}}...")
-    model = Llama(
-        model_path=gguf_file,
-        n_ctx=4096,
-        n_gpu_layers=-1,  # Use GPU if available
-        verbose=False,
-    )
-    return model
-
-
-def generate_response(model, messages: list) -> str:
-    """Generate a response using the model."""
-    # Format messages for Qwen chat template
-    prompt = ""
-    for msg in messages:
-        role = msg["role"]
-        content = msg["content"]
-        if role == "system":
-            prompt += f"<|im_start|>system\\n{{content}}<|im_end|>\\n"
-        elif role == "user":
-            prompt += f"<|im_start|>user\\n{{content}}<|im_end|>\\n"
-        elif role == "assistant":
-            prompt += f"<|im_start|>assistant\\n{{content}}<|im_end|>\\n"
-        elif role == "tool":
-            prompt += f"<|im_start|>tool\\n{{content}}<|im_end|>\\n"
-    
-    prompt += "<|im_start|>assistant\\n"
-    
-    output = model(prompt, max_tokens=512, temperature=0.3, stop=["<|im_end|>", "</tool_call>"])
-    response = output["choices"][0]["text"]
-    
-    # If stopped at </tool_call>, add it back
-    if "<tool_call>" in response and "</tool_call>" not in response:
-        response += "</tool_call>"
-    
-    return response.strip()
-
-
-def parse_tool_call(response: str) -> dict:
-    """Parse tool call from response."""
-    if "<tool_call>" in response:
-        match = re.search(r"<tool_call>\\s*(\\{{.*?\\}})\\s*", response, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except json.JSONDecodeError:
-                pass
-    return None
-
-
-# ============================================================
-# Main Agent Loop
-# ============================================================
-
-def run_agent(model, query: str) -> str:
-    """Run the full agentic loop with tool execution."""
-    messages = [
-        {{"role": "system", "content": SYSTEM_PROMPT}},
-        {{"role": "user", "content": query}},
-    ]
-    
-    max_iterations = 5
-    for i in range(max_iterations):
-        response = generate_response(model, messages)
-        tool_call = parse_tool_call(response)
+'''
         
-        if tool_call:
-            tool_name = tool_call.get("tool")
-            params = tool_call.get("parameters", {{}})
+        # Generate code for each API server
+        for server in self.api_servers:
+            server_dict = server.to_dict() if hasattr(server, 'to_dict') else server
+            server_name = server_dict.get('name', 'api')
+            base_url = server_dict.get('base_url', '')
+            auth_type = server_dict.get('auth_type', 'bearer')
+            auth_env_var = server_dict.get('auth_env_var', 'API_KEY')
+            auth_header = server_dict.get('auth_header', 'Authorization')
+            tools = server_dict.get('tools', [])
             
-            print(f"\\n🔧 Calling {{tool_name}}...")
-            result = execute_tool(tool_name, params)
-            print(f"📋 Result: {{result[:200]}}...")
-            
-            # Add to conversation
-            messages.append({{"role": "assistant", "content": response}})
-            messages.append({{"role": "tool", "content": result}})
-        else:
-            # No tool call - final response
-            return response
-    
-    return "Max iterations reached."
+            # Server config section
+            code += f'''# ============================================
+# {server_name.upper()} API
+# ============================================
 
+{server_name.upper()}_BASE_URL = "{base_url}"
+{server_name.upper()}_TOKEN = os.getenv("{auth_env_var}", "")
 
-def interactive_mode(model):
-    """Interactive chat with real tool execution."""
-    print(f"\\n🤖 {{AGENT_NAME}} Ready!")
-    print("Tools will be executed with REAL APIs (GitHub, Slack)")
-    print("Type 'quit' to exit")
-    print("-" * 50)
-    
-    while True:
-        try:
-            query = input("\\nYou: ").strip()
-            if query.lower() in ("quit", "exit", "q"):
-                print("Goodbye!")
-                break
-            if not query:
-                continue
+def _get_{server_name}_headers() -> Dict[str, str]:
+    """Get auth headers for {server_name}."""
+'''
             
-            response = run_agent(model, query)
-            print(f"\\n🤖 Agent: {{response}}")
+            # Auth header generation based on type
+            if auth_type == "bearer":
+                code += f'''    return {{
+        "Authorization": f"Bearer {{{server_name.upper()}_TOKEN}}",
+        "Content-Type": "application/json"
+    }}
+'''
+            elif auth_type == "api_key":
+                code += f'''    return {{
+        "{auth_header}": {server_name.upper()}_TOKEN,
+        "Content-Type": "application/json"
+    }}
+'''
+            elif auth_type == "basic":
+                code += f'''    import base64
+    auth = base64.b64encode({server_name.upper()}_TOKEN.encode()).decode()
+    return {{
+        "Authorization": f"Basic {{auth}}",
+        "Content-Type": "application/json"
+    }}
+'''
+            else:  # header or custom
+                code += f'''    return {{
+        "{auth_header}": {server_name.upper()}_TOKEN,
+        "Content-Type": "application/json"
+    }}
+'''
+            
+            code += "\n"
+            
+            # Generate function for each tool
+            for tool in tools:
+                tool_dict = tool if isinstance(tool, dict) else tool.to_dict()
+                tool_name = tool_dict.get('name', 'unknown')
+                method = tool_dict.get('method', 'GET').upper()
+                path = tool_dict.get('path', '/')
+                description = tool_dict.get('description', '')
+                params = tool_dict.get('parameters', {})
+                required = tool_dict.get('required_params', [])
+                request_body = tool_dict.get('request_body_schema', {})
                 
-        except KeyboardInterrupt:
-            print("\\nGoodbye!")
-            break
-
-
-def main():
-    parser = argparse.ArgumentParser(description=f"{{AGENT_NAME}} - AI Agent")
-    parser.add_argument("query", nargs="?", help="Query to process")
-    parser.add_argument("--interactive", "-i", action="store_true", help="Interactive mode")
-    args = parser.parse_args()
+                # Build function signature
+                param_list = []
+                for pname, pinfo in params.items():
+                    ptype = pinfo.get('type', 'str')
+                    py_type = {'string': 'str', 'integer': 'int', 'boolean': 'bool', 'number': 'float'}.get(ptype, 'Any')
+                    if pname in required:
+                        param_list.append(f"{pname}: {py_type}")
+                    else:
+                        default = pinfo.get('default', 'None')
+                        if py_type == 'str' and default != 'None':
+                            default = f'"{default}"'
+                        param_list.append(f"{pname}: Optional[{py_type}] = {default}")
+                
+                params_str = ", ".join(param_list) if param_list else ""
+                
+                code += f'''
+def {tool_name}({params_str}) -> Dict[str, Any]:
+    """
+    {description}
     
-    # Check credentials
-    if not os.getenv("GITHUB_TOKEN"):
-        print("⚠️  GITHUB_TOKEN not set in .env")
-    if not os.getenv("SLACK_BOT_TOKEN"):
-        print("⚠️  SLACK_BOT_TOKEN not set in .env")
+    Auto-generated API wrapper.
+    """
+    url = f"{{{server_name.upper()}_BASE_URL}}{path}"
+    headers = _get_{server_name}_headers()
     
-    model = load_model()
-    
-    if args.interactive or not args.query:
-        interactive_mode(model)
+'''
+                
+                # Handle path parameters (e.g., /repos/{owner}/{repo})
+                path_params = [p.strip('{}') for p in path.split('/') if '{' in p]
+                if path_params:
+                    code += f'''    # Substitute path parameters
+'''
+                    for pp in path_params:
+                        code += f'''    url = url.replace("{{{{{pp}}}}}", str({pp}))
+'''
+                    code += "\n"
+                
+                # Build request based on method
+                if method == "GET":
+                    # Build query params
+                    query_params = [p for p in params.keys() if p not in path_params]
+                    if query_params:
+                        code += f'''    params = {{}}
+'''
+                        for qp in query_params:
+                            code += f'''    if {qp} is not None:
+        params["{qp}"] = {qp}
+'''
+                        code += f'''
+    response = requests.get(url, headers=headers, params=params)
+'''
+                    else:
+                        code += f'''    response = requests.get(url, headers=headers)
+'''
+                
+                elif method in ("POST", "PUT", "PATCH"):
+                    # Build request body
+                    body_params = list(request_body.keys()) if request_body else [p for p in params.keys() if p not in path_params]
+                    if body_params:
+                        code += f'''    body = {{}}
+'''
+                        for bp in body_params:
+                            code += f'''    if {bp} is not None:
+        body["{bp}"] = {bp}
+'''
+                        code += f'''
+    response = requests.{method.lower()}(url, headers=headers, json=body)
+'''
+                    else:
+                        code += f'''    response = requests.{method.lower()}(url, headers=headers)
+'''
+                
+                elif method == "DELETE":
+                    code += f'''    response = requests.delete(url, headers=headers)
+'''
+                
+                # Handle response
+                code += f'''
+    if response.ok:
+        try:
+            return response.json()
+        except:
+            return {{"status": "success", "message": response.text}}
     else:
-        response = run_agent(model, args.query)
-        print(response)
+        return {{"error": response.status_code, "message": response.text}}
 
-
-if __name__ == "__main__":
-    main()
 '''
         
-        path = os.path.join(output_dir, "agent.py")
-        with open(path, "w") as f:
-            f.write(agent_py)
-        os.chmod(path, 0o755)  # Make executable
-        print(f"   📄 agent.py (Python)")
+        # Build the API_TOOLS registry
+        code += '''
+# ============================================
+# API TOOLS REGISTRY
+# ============================================
+
+API_TOOLS = {
+'''
+        for server in self.api_servers:
+            server_dict = server.to_dict() if hasattr(server, 'to_dict') else server
+            for tool in server_dict.get('tools', []):
+                tool_dict = tool if isinstance(tool, dict) else tool.to_dict()
+                tool_name = tool_dict.get('name', 'unknown')
+                code += f'    "{tool_name}": {tool_name},\n'
         
-        # Also write tools.json for reference
-        path = os.path.join(output_dir, "tools.json")
-        with open(path, "w") as f:
-            f.write(tools_json)
-        print(f"   📄 tools.json")
+        code += '''}
+
+
+def call_api_tool(name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Call an API tool by name with parameters.
+    
+    Args:
+        name: Tool name (must be in API_TOOLS)
+        params: Dictionary of parameters
         
-        # requirements.txt
-        requirements = '''# Requirements for running the agent
-llama-cpp-python>=0.2.0
-requests>=2.28.0
-python-dotenv>=1.0.0
+    Returns:
+        Tool result as dictionary
+    """
+    if name not in API_TOOLS:
+        return {"error": f"Unknown API tool: {name}"}
+    
+    try:
+        return API_TOOLS[name](**params)
+    except Exception as e:
+        return {"error": str(e)}
 '''
         
-        path = os.path.join(output_dir, "requirements.txt")
+        # Write the file
+        path = os.path.join(output_dir, "api_tools.py")
         with open(path, "w") as f:
-            f.write(requirements)
-        print(f"   📄 requirements.txt")
+            f.write(code)
+        print(f"   📄 api_tools.py ({len(self.api_servers)} services, {sum(len(s.tools) if hasattr(s, 'tools') else len(s.get('tools', [])) for s in self.api_servers)} tools)")
     
     def _write_readme(self, output_dir: str):
         """Write README with usage instructions."""
@@ -970,6 +828,7 @@ python agent.py "What's on my calendar today?"
             env_var = server_dict.get('env_var', 'API_KEY')
             auth_type = server_dict.get('auth_type', 'unknown')
             description = server_dict.get('description', '')
+            setup_url = server_dict.get('setup_url', '')  # Use from config!
             
             readme += f"### {package}\n\n"
             if description:
@@ -977,15 +836,9 @@ python agent.py "What's on my calendar today?"
             readme += f"- **Environment Variable**: `{env_var}`\n"
             readme += f"- **Auth Type**: {auth_type}\n"
             
-            # Add setup hints
-            if "github" in package.lower():
-                readme += f"- **Get Token**: [GitHub Settings → Developer Settings → Personal Access Tokens](https://github.com/settings/tokens)\n"
-            elif "google" in package.lower():
-                readme += f"- **Setup Guide**: [Google Cloud Console](https://console.cloud.google.com/apis/credentials)\n"
-            elif "postgres" in package.lower():
-                readme += f"- **Format**: `postgresql://user:password@host:5432/database`\n"
-            elif "slack" in package.lower():
-                readme += f"- **Get Token**: [Slack API Apps](https://api.slack.com/apps)\n"
+            # Add setup hint from config (no hardcoding!)
+            if setup_url:
+                readme += f"- **Setup Guide**: [{setup_url}]({setup_url})\n"
             
             readme += "\n"
         
