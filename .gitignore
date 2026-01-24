@@ -33,6 +33,7 @@ test_data_v3/
 # Standalone test scripts (not pytest tests)
 test_data_gen_v2.py
 test_data_gen_v3.py
+test_data_generator.py
 
 # Generated agent builds (keep examples)
 agent_build/
@@ -50,6 +51,7 @@ _reference/
 UserJourneywithMockups.md
 Step 1 - Manual Agent Builder (Cursor Prompt).md
 TRAINING_DATA_GUIDE.md
+SDK_PLAN.md
 
 # Old data_generation folder (deprecated)
 onsetlab/data_generation/
