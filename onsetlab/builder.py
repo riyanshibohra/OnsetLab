@@ -25,7 +25,7 @@ from pathlib import Path
 
 from .utils.schemas import ToolSchema, MCPServerConfig
 from .synthesis.prompt_generator import generate_minimal_prompt, PromptGenerator
-from .synthesis.data_generator_v3 import BatchedDataGenerator, BatchGenConfig
+from .synthesis.data_generator import BatchedDataGenerator, BatchGenConfig
 from .utils.validator import Validator
 from .training.unsloth_trainer import UnslothTrainer, TrainerConfig, SUPPORTED_MODELS
 from .runtime.packager import AgentPackager, PackageConfig, RuntimeType
