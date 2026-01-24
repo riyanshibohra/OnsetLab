@@ -40,6 +40,12 @@ class BuildConfig:
     batch_size: int = 10     # Examples per LLM call (10x fewer API calls)
     use_llm_for_prompt: bool = False  # Use LLM for richer system prompt
     
+    # Prompt settings
+    # "names_only" = Just tool names (shortest, for 20+ tools)
+    # "minimal" = Names + description (default, balanced)
+    # "full" = Names + description + params (verbose, for <10 tools)
+    prompt_detail_level: str = "minimal"
+    
     # Training settings (only Qwen2.5-3B supported)
     base_model: str = "qwen2.5-3b"  # Qwen2.5-3B-Instruct
     lora_rank: int = 16
@@ -70,11 +76,90 @@ class Agent:
     
     # Paths to generated files
     output_dir: str = None
-    model_path: str = None  # Set after training
+    model_path: str = None  # Set after training (GGUF or LoRA path)
+    package_path: str = None  # Path to package directory
     
     # Build status
     is_trained: bool = False
     is_packaged: bool = False
+    
+    def export(self, output_path: str = None) -> str:
+        """
+        Export a complete, downloadable agent package with GGUF model.
+        
+        This combines the trained model (GGUF) with the package files
+        into a single zip file ready for distribution.
+        
+        Args:
+            output_path: Path for the zip file (default: ./agent_name.zip)
+            
+        Returns:
+            Path to the created zip file
+        """
+        import shutil
+        import glob
+        
+        if not self.is_trained:
+            raise ValueError("Agent must be trained before exporting. Run build() first.")
+        
+        # Determine output paths
+        zip_name = output_path or f"./{self.name}.zip"
+        if zip_name.endswith('.zip'):
+            zip_name = zip_name[:-4]  # shutil.make_archive adds .zip
+        
+        final_dir = f"{zip_name}_temp"
+        os.makedirs(final_dir, exist_ok=True)
+        
+        print(f"📦 Exporting agent package...")
+        
+        # Find and copy GGUF file
+        gguf_file = None
+        if self.model_path:
+            # Search for GGUF in model path
+            search_paths = [
+                os.path.join(self.model_path, "*.gguf"),
+                os.path.join(self.model_path, "**", "*.gguf"),
+                os.path.join(self.output_dir, "model", "gguf", "*.gguf"),
+                os.path.join(self.output_dir, "model", "gguf", "**", "*.gguf"),
+            ]
+            
+            for pattern in search_paths:
+                files = glob.glob(pattern, recursive=True)
+                if files:
+                    # Prefer Q4_K_M quantization
+                    gguf_file = next(
+                        (f for f in files if 'Q4_K_M' in f or 'q4_k_m' in f.lower()),
+                        files[0]
+                    )
+                    break
+        
+        if gguf_file and os.path.exists(gguf_file):
+            shutil.copy(gguf_file, os.path.join(final_dir, "model.gguf"))
+            size_mb = os.path.getsize(gguf_file) / (1024 * 1024)
+            print(f"   ✅ model.gguf ({size_mb:.0f} MB)")
+        else:
+            print(f"   ⚠️ No GGUF file found - package will need model added manually")
+        
+        # Copy package files
+        package_dir = self.package_path or os.path.join(self.output_dir, "package")
+        if os.path.exists(package_dir):
+            for filename in os.listdir(package_dir):
+                src = os.path.join(package_dir, filename)
+                if os.path.isfile(src):
+                    shutil.copy(src, os.path.join(final_dir, filename))
+                    print(f"   ✅ {filename}")
+        
+        # Create zip
+        shutil.make_archive(zip_name, 'zip', final_dir)
+        
+        # Cleanup temp directory
+        shutil.rmtree(final_dir)
+        
+        zip_path = f"{zip_name}.zip"
+        size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+        print(f"\n✅ Package exported: {zip_path} ({size_mb:.0f} MB)")
+        
+        return zip_path
     
     def test(self, query: str) -> str:
         """
@@ -151,8 +236,8 @@ class AgentBuilder:
     Orchestrates the complete pipeline:
     1. System prompt generation
     2. Training data synthesis
-    3. Model fine-tuning (coming soon)
-    4. Agent packaging (coming soon)
+    3. Model fine-tuning
+    4. Agent packaging
     
     Example:
         >>> from onsetlab import AgentBuilder, ToolSchema, MCPServerConfig
@@ -247,6 +332,7 @@ class AgentBuilder:
             mcp_servers=self.mcp_servers,
             output_dir=self.config.output_dir,
             model_path=self._model_path,
+            package_path=self._package_path,
             is_trained=self._model_path is not None,
             is_packaged=self._package_path is not None,
         )
@@ -300,6 +386,7 @@ class AgentBuilder:
     def _step_1_generate_prompt(self):
         """Step 1: Generate system prompt."""
         print("\n📝 Step 1: Generating system prompt...")
+        print(f"   Detail level: {self.config.prompt_detail_level}")
         
         if self.config.use_llm_for_prompt:
             generator = PromptGenerator(api_key=self.api_key)
@@ -312,7 +399,8 @@ class AgentBuilder:
         else:
             self._system_prompt = generate_minimal_prompt(
                 self.problem_statement,
-                self.tools
+                self.tools,
+                detail_level=self.config.prompt_detail_level
             )
             print(f"   ✅ Generated template-based prompt ({len(self._system_prompt)} chars)")
     

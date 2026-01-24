@@ -32,6 +32,16 @@ class PromptConfig:
     
     # Tool call format
     tool_call_format: str = "xml"   # "xml" (<tool_call>) or "json" (```json)
+    
+    # Tool detail level in system prompt
+    # "names_only" = Just tool names (shortest, for many tools)
+    # "minimal" = Names + one-line description (default, balanced)
+    # "full" = Names + description + all params + required markers (verbose)
+    tool_detail_level: str = "minimal"
+    
+    # Model settings (for LLM mode)
+    openai_model: str = "gpt-4o-mini"  # Cheaper, still good
+    anthropic_model: str = "claude-3-haiku-20240307"  # Cheaper, still good
 
 
 class PromptGenerator:
@@ -100,12 +110,12 @@ class PromptGenerator:
                 raise ImportError("anthropic package not installed. Run: pip install anthropic")
     
     def _call_llm(self, system: str, user: str, max_tokens: int = 2000) -> str:
-        """Call the LLM API."""
+        """Call the LLM API (OpenAI or Anthropic)."""
         self._init_client()
         
         if self.api_provider == "openai":
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model=self.config.openai_model,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user}
@@ -116,7 +126,7 @@ class PromptGenerator:
             return response.choices[0].message.content
         else:  # anthropic
             response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=self.config.anthropic_model,
                 max_tokens=max_tokens,
                 system=system,
                 messages=[{"role": "user", "content": user}]
@@ -159,31 +169,31 @@ class PromptGenerator:
             })
         
         llm_system = """You are an expert at writing system prompts for AI assistants.
-Your task is to create a clear, effective system prompt for a fine-tuned language model.
+            Your task is to create a clear, effective system prompt for a fine-tuned language model.
 
-The prompt should:
-1. Clearly define the assistant's role and capabilities
-2. List all available tools with their parameters
-3. Specify the exact format for tool calls
-4. Include helpful behavioral guidelines
-5. Be concise but complete (target: 500-800 tokens)
+            The prompt should:
+            1. Clearly define the assistant's role and capabilities
+            2. List all available tools with their parameters
+            3. Specify the exact format for tool calls
+            4. Include helpful behavioral guidelines
+            5. Be concise but complete (target: 500-800 tokens)
 
-IMPORTANT: The tool call format must use XML tags:
-<tool_call>
-{"tool": "tool-name", "parameters": {"key": "value"}}
-</tool_call>
-"""
+            IMPORTANT: The tool call format must use XML tags:
+            <tool_call>
+            {"tool": "tool-name", "parameters": {"key": "value"}}
+            </tool_call>
+            """
 
         llm_user = f"""Create a system prompt for an AI assistant with these specifications:
 
-PROBLEM STATEMENT:
-{problem_statement}
+        PROBLEM STATEMENT:
+        {problem_statement}
 
-AVAILABLE TOOLS:
-{json.dumps(tool_info, indent=2)}
+        AVAILABLE TOOLS:
+        {json.dumps(tool_info, indent=2)}
 
-Generate a complete system prompt that will be used to fine-tune a small language model.
-Output ONLY the system prompt, no explanations or markdown formatting."""
+        Generate a complete system prompt that will be used to fine-tune a small language model.
+        Output ONLY the system prompt, no explanations or markdown formatting."""
 
         return self._call_llm(llm_system, llm_user)
     
@@ -294,41 +304,69 @@ def generate_system_prompt(
     return generator.generate(problem_statement, tools, use_llm=use_llm)
 
 
-def generate_minimal_prompt(problem_statement: str, tools: list[ToolSchema]) -> str:
+def generate_minimal_prompt(
+    problem_statement: str, 
+    tools: list[ToolSchema],
+    detail_level: str = "minimal"
+) -> str:
     """
-    Generate a minimal system prompt (no LLM, no API key needed).
+    Generate a system prompt (no LLM, no API key needed).
     
-    This is the simplest prompt format, optimized for SLM fine-tuning
-    where the model learns from examples rather than instructions.
+    Optimized for SLM fine-tuning where the model learns from examples.
     
     Args:
         problem_statement: Description of what the agent should do
         tools: List of available tools
+        detail_level: How much tool detail to include
+            - "names_only": Just tool names (shortest)
+            - "minimal": Names + one-line description (default)
+            - "full": Names + description + params + required markers
         
     Returns:
-        Minimal system prompt string
+        System prompt string
     """
-    tool_list = ", ".join([t.name for t in tools])
-    
-    # Build tool descriptions
+    # Build tool descriptions based on detail level
     tool_descriptions = []
-    for tool in tools:
-        params = ", ".join(tool.parameters.keys()) if tool.parameters else "none"
-        tool_descriptions.append(f"- {tool.name}: {tool.description} (params: {params})")
+    
+    if detail_level == "names_only":
+        # Just list tool names
+        tool_names = [tool.name for tool in tools]
+        tool_section = "Available tools: " + ", ".join(tool_names)
+        
+    elif detail_level == "minimal":
+        # Names + one-line description
+        for tool in tools:
+            tool_descriptions.append(f"- {tool.name}: {tool.description}")
+        tool_section = "Available tools:\n" + "\n".join(tool_descriptions)
+        
+    else:  # "full"
+        # Full details with params
+        for tool in tools:
+            param_details = []
+            for param_name, param_info in (tool.parameters or {}).items():
+                param_type = param_info.get("type", "string") if isinstance(param_info, dict) else "string"
+                is_required = param_name in (tool.required_params or [])
+                req_marker = " (required)" if is_required else ""
+                param_details.append(f"    - {param_name}: {param_type}{req_marker}")
+            
+            tool_entry = f"- {tool.name}: {tool.description}"
+            if param_details:
+                tool_entry += "\n" + "\n".join(param_details)
+            tool_descriptions.append(tool_entry)
+        tool_section = "Available tools:\n" + "\n".join(tool_descriptions)
     
     prompt = f"""You are an assistant that helps users with: {problem_statement}
 
-Available tools:
-{chr(10).join(tool_descriptions)}
+{tool_section}
 
-When you need to use a tool, respond with EXACTLY this format:
+When you need to use a tool, respond with:
 <tool_call>
 {{"tool": "tool-name", "parameters": {{"key": "value"}}}}
 </tool_call>
 
 Rules:
-- Always use the exact tool names listed above
-- Use ISO format for dates/times when needed
+- Use the exact tool names listed above
+- For casual conversation, respond naturally without tools
 - Be helpful and concise"""
     
     return prompt
