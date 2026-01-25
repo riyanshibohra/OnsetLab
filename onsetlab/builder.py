@@ -36,8 +36,8 @@ class BuildConfig:
     """Configuration for the agent building pipeline."""
     
     # Data generation settings (v3 batched generator)
-    num_examples: int = 500  # Total examples to generate
-    batch_size: int = 10     # Examples per LLM call (10x fewer API calls)
+    num_examples: int = None  # Auto-calculated from tool count if None
+    batch_size: int = 10      # Examples per LLM call (10x fewer API calls)
     use_llm_for_prompt: bool = False  # Use LLM for richer system prompt
     
     # Prompt settings
@@ -45,6 +45,10 @@ class BuildConfig:
     # "minimal" = Names + description (default, balanced)
     # "full" = Names + description + params (verbose, for <10 tools)
     prompt_detail_level: str = "minimal"
+    
+    # Resume from existing data (skip prompt + data generation)
+    # Set to path containing train.jsonl, validation.jsonl, test.jsonl, system_prompt.txt
+    existing_data_dir: str = None  # e.g., "./agent_build" to resume from previous run
     
     # Training settings (only Qwen2.5-3B supported)
     # Set to None for auto-adjustment based on dataset size and tool count
@@ -119,38 +123,80 @@ class Agent:
         
         print(f"📦 Exporting agent package...")
         
-        # Find and copy GGUF file
+        # Find GGUF file - search in multiple locations
         gguf_file = None
+        search_paths = []
+        
+        # Priority 1: model_path directory
         if self.model_path:
-            # Search for GGUF in model path
-            search_paths = [
-                os.path.join(self.model_path, "*.gguf"),
-                os.path.join(self.model_path, "**", "*.gguf"),
+            if self.model_path.endswith('.gguf') and os.path.exists(self.model_path):
+                gguf_file = self.model_path
+            else:
+                search_paths.extend([
+                    os.path.join(self.model_path, "*.gguf"),
+                    os.path.join(self.model_path, "**", "*.gguf"),
+                ])
+        
+        # Priority 2: Standard build output locations
+        if self.output_dir:
+            search_paths.extend([
                 os.path.join(self.output_dir, "model", "gguf", "*.gguf"),
                 os.path.join(self.output_dir, "model", "gguf", "**", "*.gguf"),
-            ]
-            
-            for pattern in search_paths:
-                files = glob.glob(pattern, recursive=True)
-                if files:
-                    # Prefer Q4_K_M quantization
-                    gguf_file = next(
-                        (f for f in files if 'Q4_K_M' in f or 'q4_k_m' in f.lower()),
-                        files[0]
-                    )
-                    break
+                os.path.join(self.output_dir, "model", "*.gguf"),
+                os.path.join(self.output_dir, "*.gguf"),
+            ])
         
+        # Priority 3: Colab-specific locations
+        search_paths.extend([
+            "/content/agent_build/model/gguf/*.gguf",
+            "/content/agent_build/model/*.gguf",
+            "/content/trained_model/**/*.gguf",
+            "/content/*.gguf",
+        ])
+        
+        # Priority 4: Current directory
+        search_paths.extend([
+            "./*.gguf",
+            "./**/*.gguf",
+        ])
+        
+        # Search all paths if not already found
+        if not gguf_file:
+            all_found = []
+            for pattern in search_paths:
+                try:
+                    files = glob.glob(pattern, recursive=True)
+                    files = [f for f in files if f.endswith('.gguf') and os.path.isfile(f)]
+                    all_found.extend(files)
+                except:
+                    continue
+            
+            # Remove duplicates
+            all_found = list(set(all_found))
+            
+            if all_found:
+                # Prefer Q4_K_M quantization, then largest
+                q4_files = [f for f in all_found if 'Q4_K_M' in f or 'q4_k_m' in f.lower()]
+                if q4_files:
+                    gguf_file = max(q4_files, key=os.path.getsize)
+                else:
+                    gguf_file = max(all_found, key=os.path.getsize)
+        
+        # Copy GGUF to package
         if gguf_file and os.path.exists(gguf_file):
-            shutil.copy(gguf_file, os.path.join(final_dir, "model.gguf"))
-            size_mb = os.path.getsize(gguf_file) / (1024 * 1024)
+            dest = os.path.join(final_dir, "model.gguf")
+            shutil.copy(gguf_file, dest)
+            size_mb = os.path.getsize(dest) / (1024 * 1024)
             print(f"   ✅ model.gguf ({size_mb:.0f} MB)")
         else:
             print(f"   ⚠️ No GGUF file found - package will need model added manually")
         
-        # Copy package files
+        # Copy package files (skip model.gguf if already copied)
         package_dir = self.package_path or os.path.join(self.output_dir, "package")
         if os.path.exists(package_dir):
             for filename in os.listdir(package_dir):
+                if filename == "model.gguf":
+                    continue  # Already handled above
                 src = os.path.join(package_dir, filename)
                 if os.path.isfile(src):
                     shutil.copy(src, os.path.join(final_dir, filename))
@@ -165,6 +211,7 @@ class Agent:
         zip_path = f"{zip_name}.zip"
         size_mb = os.path.getsize(zip_path) / (1024 * 1024)
         print(f"\n✅ Package exported: {zip_path} ({size_mb:.0f} MB)")
+        print(f"🎉 Agent exported! Check your downloads.")
         
         return zip_path
     
@@ -325,13 +372,22 @@ class AgentBuilder:
         print(f"\nProblem: {self.problem_statement}")
         print(f"Tools: {len(self.tools)}")
         print(f"MCP Servers: {len(self.mcp_servers)}")
-        print(f"Target examples: {self.config.num_examples}")
         
-        # Step 1: Generate system prompt
-        self._step_1_generate_prompt()
-        
-        # Step 2: Generate training data
-        self._step_2_generate_data()
+        # Check if resuming from existing data
+        if self.config.existing_data_dir:
+            print(f"📂 Resuming from existing data: {self.config.existing_data_dir}")
+            self._load_existing_data()
+        else:
+            if self.config.num_examples:
+                print(f"Target examples: {self.config.num_examples}")
+            else:
+                auto_examples = BatchGenConfig.calculate_optimal_examples(len(self.tools))
+                print(f"Target examples: {auto_examples} (auto-calculated for {len(self.tools)} tools)")
+            # Step 1: Generate system prompt
+            self._step_1_generate_prompt()
+            
+            # Step 2: Generate training data
+            self._step_2_generate_data()
         
         # Step 3: Validate training data
         self._step_3_validate_data()
@@ -431,18 +487,67 @@ class AgentBuilder:
             )
             print(f"   ✅ Generated template-based prompt ({len(self._system_prompt)} chars)")
     
+    def _load_existing_data(self):
+        """Load existing data from a previous run (skip generation steps)."""
+        base_dir = self.config.existing_data_dir
+        
+        # Load system prompt
+        prompt_paths = [
+            os.path.join(base_dir, "package", "system_prompt.txt"),
+            os.path.join(base_dir, "system_prompt.txt"),
+        ]
+        for path in prompt_paths:
+            if os.path.exists(path):
+                with open(path, 'r') as f:
+                    self._system_prompt = f.read()
+                print(f"   ✅ Loaded system prompt ({len(self._system_prompt)} chars)")
+                break
+        else:
+            raise FileNotFoundError(f"No system_prompt.txt found in {base_dir}")
+        
+        # Load training data paths
+        data_dir = os.path.join(base_dir, "data")
+        if not os.path.exists(data_dir):
+            data_dir = base_dir  # Maybe data is in root
+        
+        self._training_data_path = os.path.join(data_dir, "train.jsonl")
+        self._validation_data_path = os.path.join(data_dir, "validation.jsonl")
+        self._test_data_path = os.path.join(data_dir, "test.jsonl")
+        
+        if not os.path.exists(self._training_data_path):
+            raise FileNotFoundError(f"No train.jsonl found in {data_dir}")
+        
+        # Count examples
+        with open(self._training_data_path, 'r') as f:
+            self._examples_generated = sum(1 for _ in f)
+        
+        print(f"   ✅ Loaded {self._examples_generated} training examples")
+        print(f"   📄 Train: {self._training_data_path}")
+        if os.path.exists(self._validation_data_path):
+            print(f"   📄 Validation: {self._validation_data_path}")
+        if os.path.exists(self._test_data_path):
+            print(f"   📄 Test: {self._test_data_path}")
+    
     def _step_2_generate_data(self):
         """Step 2: Generate synthetic training data using batched v3 generator."""
-        print(f"\n📊 Step 2: Generating {self.config.num_examples} training examples (batched)...")
+        
+        # Auto-calculate examples based on tool count if not specified
+        num_examples = self.config.num_examples
+        if num_examples is None:
+            num_examples = BatchGenConfig.calculate_optimal_examples(len(self.tools))
+            print(f"\n📊 Step 2: Auto-calculated {num_examples} examples for {len(self.tools)} tools")
+        else:
+            print(f"\n📊 Step 2: Generating {num_examples} training examples (batched)...")
+        
         print(f"   Batch size: {self.config.batch_size} examples/call")
-        print(f"   Expected API calls: ~{self.config.num_examples // self.config.batch_size}")
+        print(f"   Expected API calls: ~{num_examples // self.config.batch_size}")
         
         # Ensure output directory exists
         os.makedirs(self.config.output_dir, exist_ok=True)
         
         # Create v3 batched generator config
         gen_config = BatchGenConfig(
-            total_examples=self.config.num_examples,
+            total_examples=num_examples,
             batch_size=self.config.batch_size,
         )
         
@@ -473,11 +578,11 @@ class AgentBuilder:
         total_generated = generator.stats.get("examples_generated", 0)
         self._examples_generated = total_generated
         
-        # Check if we got expected amount
-        expected = self.config.num_examples
+        # Check if we got expected amount (use local num_examples, not config which might be None)
+        expected = num_examples
         actual = total_generated
         
-        if actual < expected * 0.5:
+        if expected and actual < expected * 0.5:
             self._warnings.append(f"Only {actual}/{expected} examples generated (target missed by >50%)")
             print(f"   ⚠️ Only generated {actual}/{expected} examples")
         else:
