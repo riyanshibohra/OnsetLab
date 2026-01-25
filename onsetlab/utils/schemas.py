@@ -111,7 +111,8 @@ class MCPServerConfig:
         package: NPM package name (e.g., "@modelcontextprotocol/server-github")
         name: Short name for the server (e.g., "github"). Auto-derived if not set.
         auth_type: Authentication method ("oauth", "token", "api_key", "cookie", "none")
-        env_var: Environment variable name for credentials
+        env_vars: List of ALL required environment variable names (preferred)
+        env_var: Single env var (deprecated, use env_vars for multiple)
         description: Human-readable description of the server
         setup_url: URL to setup/documentation guide
         command: Command to run the server (default: "npx")
@@ -120,21 +121,30 @@ class MCPServerConfig:
         example_value: Example credential value for .env.example
     
     Example:
+        >>> # Slack needs TWO env vars!
+        >>> server = MCPServerConfig(
+        ...     package="@modelcontextprotocol/server-slack",
+        ...     name="slack",
+        ...     auth_type="token",
+        ...     env_vars=["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"],  # Multiple env vars
+        ...     description="Slack integration",
+        ...     tools=["send_message", "list_channels"],
+        ... )
+        >>> 
+        >>> # GitHub needs just one
         >>> server = MCPServerConfig(
         ...     package="@modelcontextprotocol/server-github",
         ...     name="github",
         ...     auth_type="token",
-        ...     env_var="GITHUB_PERSONAL_ACCESS_TOKEN",
+        ...     env_vars=["GITHUB_PERSONAL_ACCESS_TOKEN"],
         ...     description="GitHub API integration",
-        ...     setup_url="https://github.com/settings/tokens",
-        ...     tools=["list_issues", "create_issue", "search_repositories"],
-        ...     example_value="ghp_xxxxxxxxxxxxxxxxxxxx"
         ... )
     """
     package: str
     name: Optional[str] = None  # Auto-derived from package if not set
     auth_type: str = "none"  # "oauth", "token", "api_key", "cookie", "none"
-    env_var: Optional[str] = None
+    env_vars: Optional[list] = None  # List of ALL required env vars (preferred)
+    env_var: Optional[str] = None  # Single env var (deprecated, for backwards compat)
     description: str = ""
     setup_url: Optional[str] = None
     command: str = "npx"  # Command to run server
@@ -151,6 +161,16 @@ class MCPServerConfig:
             self.args = ["-y", self.package]
         if self.tools is None:
             self.tools = []
+        
+        # Consolidate env_var and env_vars
+        if self.env_vars is None:
+            self.env_vars = []
+        if self.env_var and self.env_var not in self.env_vars:
+            self.env_vars.insert(0, self.env_var)
+    
+    def get_all_env_vars(self) -> list:
+        """Get all required environment variables."""
+        return self.env_vars or ([self.env_var] if self.env_var else [])
     
     def to_dict(self) -> dict:
         """Convert to dictionary format (for serialization)."""
@@ -162,8 +182,12 @@ class MCPServerConfig:
             "args": self.args,
             "tools": self.tools or [],
         }
-        if self.env_var:
-            result["env_var"] = self.env_var
+        # Prefer env_vars (list) over single env_var
+        all_env_vars = self.get_all_env_vars()
+        if all_env_vars:
+            result["env_vars"] = all_env_vars
+            # Also include env_var for backwards compat
+            result["env_var"] = all_env_vars[0]
         if self.description:
             result["description"] = self.description
         if self.setup_url:
@@ -177,7 +201,8 @@ class MCPServerConfig:
         return json.dumps(self.to_dict(), indent=2)
     
     def __repr__(self) -> str:
-        return f"MCPServerConfig(package='{self.package}', auth='{self.auth_type}')"
+        env_count = len(self.get_all_env_vars())
+        return f"MCPServerConfig(package='{self.package}', auth='{self.auth_type}', env_vars={env_count})"
 
 
 # ============================================================================
