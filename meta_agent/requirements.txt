@@ -1,0 +1,28 @@
+# Meta-Agent Backend Dependencies
+# ================================
+# Install with: pip install -r requirements.txt
+
+# LangChain / LangGraph
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langgraph>=0.0.20
+
+# Anthropic (Claude)
+anthropic>=0.39.0
+
+# Web Search
+tavily-python>=0.3.0
+
+# Web Framework
+fastapi>=0.109.0
+uvicorn>=0.27.0
+pydantic>=2.5.0
+
+# HTTP Client
+httpx>=0.26.0
+
+# Utilities
+python-dotenv>=1.0.0
+
+# Quick UI (optional)
+gradio>=4.0.0
