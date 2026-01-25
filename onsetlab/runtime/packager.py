@@ -121,55 +121,57 @@ class AgentPackager:
         import shutil
         import glob
         
-        # Search for GGUF file in multiple locations (Unsloth can save anywhere)
-        search_locations = []
+        # Search for GGUF file
+        gguf_file = None
+        search_paths = []
         
-        # 1. Provided model path
-        if self.model_path:
-            search_locations.append(os.path.join(self.model_path, "*.gguf"))
-            search_locations.append(os.path.join(self.model_path, "**", "*.gguf"))
-            if self.model_path.endswith('.gguf'):
-                search_locations.append(self.model_path)
+        # If model_path is a direct .gguf file
+        if self.model_path and self.model_path.endswith('.gguf'):
+            if os.path.exists(self.model_path):
+                gguf_file = self.model_path
         
-        # 2. Common Unsloth output locations
-        search_locations.extend([
-            "./*.gguf",                    # Current directory
-            "./**/*.gguf",                 # Recursive from current
+        # If model_path is a directory, search within it
+        if not gguf_file and self.model_path and os.path.isdir(self.model_path):
+            search_paths.extend([
+                os.path.join(self.model_path, "*.gguf"),
+                os.path.join(self.model_path, "**", "*.gguf"),
+            ])
+        
+        # Common output locations
+        search_paths.extend([
             "./agent_build/model/gguf/*.gguf",
-            "./agent_build/model/gguf/**/*.gguf",
-            "/content/*.gguf",             # Colab root
-            "/content/**/*.gguf",          # Colab recursive
+            "./agent_build/model/*.gguf",
+            "./*.gguf",
         ])
         
-        gguf_file = None
-        all_found = []
-        
-        for pattern in search_locations:
-            try:
-                files = glob.glob(pattern, recursive=True)
-                all_found.extend(files)
-            except:
-                continue
-        
-        # Remove duplicates and filter for Q4_K_M preference
-        all_found = list(set(all_found))
-        
-        if all_found:
-            # Prefer Q4_K_M quantization
-            gguf_file = next(
-                (f for f in all_found if 'Q4_K_M' in f or 'q4_k_m' in f.lower()),
-                all_found[0]
-            )
+        # Search if not found yet
+        if not gguf_file:
+            all_found = []
+            for pattern in search_paths:
+                try:
+                    files = glob.glob(pattern, recursive=True)
+                    files = [f for f in files if f.endswith('.gguf') and os.path.isfile(f)]
+                    all_found.extend(files)
+                except:
+                    continue
+            
+            all_found = list(set(all_found))
+            if all_found:
+                # Prefer Q4_K_M quantization
+                q4_files = [f for f in all_found if 'Q4_K_M' in f or 'q4_k_m' in f.lower()]
+                if q4_files:
+                    gguf_file = max(q4_files, key=os.path.getsize)
+                else:
+                    # Take the largest file (likely the actual model)
+                    gguf_file = max(all_found, key=os.path.getsize)
         
         if gguf_file and os.path.exists(gguf_file):
             dest = os.path.join(output_dir, "model.gguf")
             shutil.copy(gguf_file, dest)
             size_mb = os.path.getsize(dest) / (1024 * 1024)
-            print(f"   📦 model.gguf ({size_mb:.0f} MB) - from {gguf_file}")
+            print(f"   ✅ model.gguf ({size_mb:.0f} MB)")
         else:
-            print(f"   ⚠️ No GGUF file found!")
-            print(f"      Searched: {self.model_path}, ./agent_build/model/gguf/, /content/")
-            print(f"      Found files: {all_found[:5] if all_found else 'none'}")
+            print(f"   ⚠️ No GGUF file found - will need to add model.gguf manually")
     
     def _write_system_prompt(self, output_dir: str):
         """Write system prompt file."""
@@ -202,15 +204,22 @@ class AgentPackager:
             name = server_dict.get("name", "server")
             command = server_dict.get("command", "npx")
             args = server_dict.get("args", [])
-            env_var = server_dict.get("env_var", "API_KEY")
             server_tools = server_dict.get("tools", [])
+            
+            # Handle both env_vars (list) and env_var (single)
+            env_vars = server_dict.get("env_vars", [])
+            if not env_vars and server_dict.get("env_var"):
+                env_vars = [server_dict.get("env_var")]
+            
+            # Build env dict with ALL required env vars
+            env_dict = {}
+            for ev in env_vars:
+                env_dict[ev] = f"${{{ev}}}"
             
             config["mcpServers"][name] = {
                 "command": command,
                 "args": args,
-                "env": {
-                    env_var: f"${{{env_var}}}"
-                },
+                "env": env_dict,
                 "tools": server_tools
             }
             
@@ -273,10 +282,16 @@ class AgentPackager:
             for server in self.mcp_servers:
                 server_dict = server.to_dict() if hasattr(server, 'to_dict') else server
                 package = server_dict.get("package", "unknown")
-                env_var = server_dict.get("env_var", "API_KEY")
                 auth_type = server_dict.get("auth_type", "token")
                 description = server_dict.get("description", "")
                 setup_url = server_dict.get("setup_url", "")
+                
+                # Handle both env_vars (list) and env_var (single)
+                env_vars = server_dict.get("env_vars", [])
+                if not env_vars and server_dict.get("env_var"):
+                    env_vars = [server_dict.get("env_var")]
+                if not env_vars:
+                    env_vars = ["API_KEY"]
                 example_value = server_dict.get("example_value", "")
                 
                 env_content += f"# {package}\n"
@@ -296,10 +311,13 @@ class AgentPackager:
                 if setup_url:
                     env_content += f"# Setup guide: {setup_url}\n"
                 
-                if example_value:
-                    env_content += f'{env_var}={example_value}\n\n'
-                else:
-                    env_content += f'{env_var}=your_{env_var.lower()}_here\n\n'
+                # Write ALL required env vars
+                for ev in env_vars:
+                    if example_value and ev == env_vars[0]:
+                        env_content += f'{ev}={example_value}\n'
+                    else:
+                        env_content += f'{ev}=your_{ev.lower()}_here\n'
+                env_content += "\n"
         
         # API Servers
         if self.api_servers:
@@ -343,13 +361,25 @@ class AgentPackager:
     
     def _write_setup_script(self, output_dir: str):
         """Write setup.sh script to validate credentials."""
-        env_vars = []
+        all_env_vars = []
         for server in self.mcp_servers:
             server_dict = server.to_dict() if hasattr(server, 'to_dict') else server
-            env_vars.append(server_dict.get("env_var", "API_KEY"))
+            # Handle both env_vars (list) and env_var (single)
+            server_env_vars = server_dict.get("env_vars", [])
+            if not server_env_vars and server_dict.get("env_var"):
+                server_env_vars = [server_dict.get("env_var")]
+            all_env_vars.extend(server_env_vars)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_env_vars = []
+        for ev in all_env_vars:
+            if ev and ev not in seen:
+                seen.add(ev)
+                unique_env_vars.append(ev)
         
         env_checks = "\n".join([
-            f'check_env "{var}"' for var in env_vars
+            f'check_env "{var}"' for var in unique_env_vars
         ])
         
         setup_script = f'''#!/bin/bash
@@ -825,15 +855,27 @@ python agent.py "What's on my calendar today?"
         for server in self.mcp_servers:
             server_dict = server.to_dict() if hasattr(server, 'to_dict') else server
             package = server_dict.get('package', 'unknown')
-            env_var = server_dict.get('env_var', 'API_KEY')
             auth_type = server_dict.get('auth_type', 'unknown')
             description = server_dict.get('description', '')
             setup_url = server_dict.get('setup_url', '')  # Use from config!
             
+            # Handle both env_vars (list) and env_var (single)
+            env_vars = server_dict.get("env_vars", [])
+            if not env_vars and server_dict.get("env_var"):
+                env_vars = [server_dict.get("env_var")]
+            
             readme += f"### {package}\n\n"
             if description:
                 readme += f"{description}\n\n"
-            readme += f"- **Environment Variable**: `{env_var}`\n"
+            
+            # Show all required env vars
+            if len(env_vars) == 1:
+                readme += f"- **Environment Variable**: `{env_vars[0]}`\n"
+            elif len(env_vars) > 1:
+                readme += f"- **Environment Variables** ({len(env_vars)} required):\n"
+                for ev in env_vars:
+                    readme += f"  - `{ev}`\n"
+            
             readme += f"- **Auth Type**: {auth_type}\n"
             
             # Add setup hint from config (no hardcoding!)
