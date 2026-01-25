@@ -340,10 +340,18 @@ class UnslothTrainer:
         import os
         os.environ["WANDB_DISABLED"] = "true"
         
-        from trl import SFTTrainer
-        from transformers import TrainingArguments
         from unsloth import is_bfloat16_supported
         from datasets import Dataset
+        
+        # Handle different trl versions - try newer API first
+        try:
+            from trl import SFTTrainer, SFTConfig
+            use_sft_config = True
+        except ImportError:
+            from trl import SFTTrainer
+            from transformers import TrainingArguments
+            use_sft_config = False
+            print("   ⚠️ Using older trl API (TrainingArguments)")
         
         # Load training data FIRST (need size for auto-adjustment)
         train_examples = self._load_training_data()
@@ -396,48 +404,81 @@ class UnslothTrainer:
         if self.config.learning_rate is None:
             self.config.learning_rate = 2e-4  # Safe default
         
-        # Training arguments - now with validation and NO W&B
-        training_args = TrainingArguments(
-            output_dir=self.config.output_dir,
-            num_train_epochs=self.config.epochs,
-            per_device_train_batch_size=self.config.batch_size,
-            per_device_eval_batch_size=self.config.batch_size,  # For validation
-            gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-            learning_rate=self.config.learning_rate,
-            warmup_ratio=self.config.warmup_ratio,
-            weight_decay=self.config.weight_decay,
-            logging_steps=10,
-            save_strategy="epoch",
-            eval_strategy="epoch",  # Evaluate at each epoch
-            fp16=not is_bfloat16_supported(),
-            bf16=is_bfloat16_supported(),
-            optim="adamw_8bit",
-            seed=42,
-            report_to="none",  # Disable W&B, TensorBoard, etc.
-            load_best_model_at_end=True,  # Keep best model based on val loss
-            metric_for_best_model="eval_loss",
-            greater_is_better=False,  # Lower loss is better
-        )
-        
         # Unsloth's recommended trainer setup
         print("🚀 Starting training (with validation)...")
         
-        # Unsloth requires formatting_func even with pre-formatted data
-        def formatting_prompts_func(batch):
-            """Return the pre-formatted text strings."""
-            return batch["text"]
-        
-        self.trainer = SFTTrainer(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            train_dataset=train_dataset,
-            eval_dataset=val_dataset,  # Add validation set!
-            formatting_func=formatting_prompts_func,
-            max_seq_length=self.config.max_seq_length,
-            dataset_num_proc=2,
-            packing=False,
-            args=training_args,
-        )
+        if use_sft_config:
+            # New trl API (v0.8+): Use SFTConfig
+            sft_config = SFTConfig(
+                # Training settings
+                output_dir=self.config.output_dir,
+                num_train_epochs=self.config.epochs,
+                per_device_train_batch_size=self.config.batch_size,
+                per_device_eval_batch_size=self.config.batch_size,
+                gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+                learning_rate=self.config.learning_rate,
+                warmup_ratio=self.config.warmup_ratio,
+                weight_decay=self.config.weight_decay,
+                logging_steps=10,
+                save_strategy="epoch",
+                eval_strategy="epoch",
+                fp16=not is_bfloat16_supported(),
+                bf16=is_bfloat16_supported(),
+                optim="adamw_8bit",
+                seed=42,
+                report_to="none",
+                load_best_model_at_end=True,
+                metric_for_best_model="eval_loss",
+                greater_is_better=False,
+                # SFT-specific settings
+                max_seq_length=self.config.max_seq_length,
+                dataset_text_field="text",  # Use column name, more reliable
+                dataset_num_proc=2,
+                packing=False,
+            )
+            
+            self.trainer = SFTTrainer(
+                model=self.model,
+                tokenizer=self.tokenizer,  # Works in both old and new trl
+                train_dataset=train_dataset,
+                eval_dataset=val_dataset,
+                args=sft_config,
+            )
+        else:
+            # Old trl API: Use TrainingArguments + direct params
+            training_args = TrainingArguments(
+                output_dir=self.config.output_dir,
+                num_train_epochs=self.config.epochs,
+                per_device_train_batch_size=self.config.batch_size,
+                per_device_eval_batch_size=self.config.batch_size,
+                gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+                learning_rate=self.config.learning_rate,
+                warmup_ratio=self.config.warmup_ratio,
+                weight_decay=self.config.weight_decay,
+                logging_steps=10,
+                save_strategy="epoch",
+                evaluation_strategy="epoch",  # Old API uses evaluation_strategy
+                fp16=not is_bfloat16_supported(),
+                bf16=is_bfloat16_supported(),
+                optim="adamw_8bit",
+                seed=42,
+                report_to="none",
+                load_best_model_at_end=True,
+                metric_for_best_model="eval_loss",
+                greater_is_better=False,
+            )
+            
+            self.trainer = SFTTrainer(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                train_dataset=train_dataset,
+                eval_dataset=val_dataset,
+                dataset_text_field="text",
+                max_seq_length=self.config.max_seq_length,
+                dataset_num_proc=2,
+                packing=False,
+                args=training_args,
+            )
         
         # Train!
         train_result = self.trainer.train()
@@ -447,20 +488,27 @@ class UnslothTrainer:
         print("📊 Training Summary")
         print("=" * 50)
         
-        # Get final metrics
-        final_train_loss = train_result.training_loss
+        # Get final metrics (handle different trl versions)
+        final_train_loss = getattr(train_result, 'training_loss', None)
+        if final_train_loss is None:
+            # Try alternative attribute names
+            metrics = getattr(train_result, 'metrics', {})
+            final_train_loss = metrics.get('train_loss', metrics.get('loss', 0))
         print(f"   Final Training Loss: {final_train_loss:.4f}")
         
         # Run final evaluation
-        eval_metrics = self.trainer.evaluate()
-        final_val_loss = eval_metrics.get("eval_loss", 0)
-        print(f"   Final Validation Loss: {final_val_loss:.4f}")
-        
-        # Check for overfitting
-        if final_val_loss > final_train_loss * 1.5:
-            print(f"   ⚠️ Warning: Possible overfitting (val_loss >> train_loss)")
-        elif final_val_loss < final_train_loss * 1.2:
-            print(f"   ✅ Good fit: validation and training loss are close")
+        try:
+            eval_metrics = self.trainer.evaluate()
+            final_val_loss = eval_metrics.get("eval_loss", 0)
+            print(f"   Final Validation Loss: {final_val_loss:.4f}")
+            
+            # Check for overfitting
+            if final_val_loss > final_train_loss * 1.5:
+                print(f"   ⚠️ Warning: Possible overfitting (val_loss >> train_loss)")
+            elif final_val_loss < final_train_loss * 1.2:
+                print(f"   ✅ Good fit: validation and training loss are close")
+        except Exception as e:
+            print(f"   ⚠️ Could not run evaluation: {e}")
         
         print("=" * 50)
         print("✅ Training complete!")
