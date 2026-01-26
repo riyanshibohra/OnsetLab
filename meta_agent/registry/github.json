@@ -13,7 +13,20 @@
     "type": "token",
     "env_vars": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
     "setup_url": "https://github.com/settings/tokens",
-    "setup_instructions": "Create a Personal Access Token with 'repo' scope for full repository access"
+    "setup_instructions": "Create a Personal Access Token with 'repo' scope for full repository access",
+    "guide": {
+      "steps": [
+        "Go to https://github.com/settings/tokens",
+        "Click 'Generate new token' → 'Generate new token (classic)'",
+        "Give it a name (e.g., 'OnsetLab Agent')",
+        "Select expiration (recommend 90 days or custom)",
+        "Select scopes: ✓ repo (full access)",
+        "Click 'Generate token' at the bottom",
+        "Copy the token immediately (starts with 'ghp_')",
+        "Save it securely - you won't see it again!"
+      ],
+      "notes": "Never commit tokens to git. The token starts with 'ghp_'."
+    }
   },
   "toolsets": [
     {

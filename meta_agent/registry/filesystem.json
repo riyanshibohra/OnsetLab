@@ -13,7 +13,16 @@
     "type": "none",
     "env_vars": [],
     "setup_url": "",
-    "setup_instructions": "Specify allowed directories as command-line arguments after the package name, e.g., npx -y @modelcontextprotocol/server-filesystem /path/to/dir1 /path/to/dir2"
+    "setup_instructions": "Specify allowed directories as command-line arguments after the package name, e.g., npx -y @modelcontextprotocol/server-filesystem /path/to/dir1 /path/to/dir2",
+    "guide": {
+      "steps": [
+        "No API key or token required",
+        "Configure allowed directories in the agent config",
+        "Add paths the agent can access (e.g., ~/Documents, ~/Projects)",
+        "Paths are passed as command arguments to the MCP server"
+      ],
+      "notes": "For security, only specified directories are accessible. Use absolute paths."
+    }
   },
   "toolsets": [
     {

@@ -13,7 +13,19 @@
     "type": "token",
     "env_vars": ["NOTION_TOKEN"],
     "setup_url": "https://www.notion.so/profile/integrations",
-    "setup_instructions": "Create an internal integration at https://www.notion.so/profile/integrations and connect it to your pages via the Access tab or page connections"
+    "setup_instructions": "Create an internal integration at https://www.notion.so/profile/integrations and connect it to your pages via the Access tab or page connections",
+    "guide": {
+      "steps": [
+        "Go to https://www.notion.so/profile/integrations",
+        "Click 'New integration'",
+        "Name it (e.g., 'OnsetLab Agent')",
+        "Select the workspace to connect",
+        "Copy the 'Internal Integration Secret' (starts with 'secret_')",
+        "Go to pages you want the agent to access",
+        "Click '...' → 'Connections' → Add your integration"
+      ],
+      "notes": "Integration only sees pages it's explicitly connected to. Add connection to parent pages for recursive access."
+    }
   },
   "toolsets": [
     {

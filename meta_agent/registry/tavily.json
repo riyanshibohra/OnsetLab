@@ -13,7 +13,17 @@
     "type": "api_key",
     "env_vars": ["TAVILY_API_KEY"],
     "setup_url": "https://app.tavily.com/home",
-    "setup_instructions": "Sign up for a free account at tavily.com and get your API key from the dashboard"
+    "setup_instructions": "Sign up for a free account at tavily.com and get your API key from the dashboard",
+    "guide": {
+      "steps": [
+        "Go to https://app.tavily.com/",
+        "Sign up for a free account (or log in)",
+        "Go to Dashboard → API Keys",
+        "Copy your API key",
+        "Free tier: 1000 searches/month"
+      ],
+      "notes": "Tavily provides AI-optimized search results. Free tier is generous for most use cases."
+    }
   },
   "toolsets": [
     {

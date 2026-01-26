@@ -13,7 +13,20 @@
     "type": "token",
     "env_vars": ["SLACK_MCP_XOXP_TOKEN"],
     "setup_url": "https://api.slack.com/apps",
-    "setup_instructions": "Use User OAuth token (xoxp-...), Bot token (xoxb-...), or Browser tokens (xoxc-... + xoxd-...). User OAuth recommended for full access."
+    "setup_instructions": "Use User OAuth token (xoxp-...), Bot token (xoxb-...), or Browser tokens (xoxc-... + xoxd-...). User OAuth recommended for full access.",
+    "guide": {
+      "steps": [
+        "Go to https://api.slack.com/apps",
+        "Click 'Create New App' → 'From scratch'",
+        "Name it (e.g., 'OnsetLab Agent') and select workspace",
+        "Go to 'OAuth & Permissions' in sidebar",
+        "Add Bot Token Scopes: channels:read, chat:write, users:read",
+        "Click 'Install to Workspace' at top",
+        "Authorize the app",
+        "Copy 'Bot User OAuth Token' (starts with 'xoxb-')"
+      ],
+      "notes": "For full access, use User OAuth Token (xoxp-) instead of Bot Token. Bot tokens have limited permissions."
+    }
   },
   "toolsets": [
     {

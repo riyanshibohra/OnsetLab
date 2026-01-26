@@ -13,7 +13,20 @@
     "type": "oauth",
     "env_vars": ["CREDENTIALS_PATH"],
     "setup_url": "https://console.cloud.google.com/",
-    "setup_instructions": "Create OAuth 2.0 Desktop App credentials in Google Cloud Console with Google Calendar API enabled. Required scope: https://www.googleapis.com/auth/calendar.events"
+    "setup_instructions": "Create OAuth 2.0 Desktop App credentials in Google Cloud Console with Google Calendar API enabled. Required scope: https://www.googleapis.com/auth/calendar.events",
+    "guide": {
+      "steps": [
+        "Go to https://console.cloud.google.com/",
+        "Create a new project or select existing",
+        "Enable 'Google Calendar API' in APIs & Services",
+        "Go to 'Credentials' → 'Create Credentials' → 'OAuth client ID'",
+        "Select 'Desktop app' as application type",
+        "Download the JSON credentials file",
+        "Save as 'credentials.json' in your agent folder",
+        "Set CREDENTIALS_PATH to the file location"
+      ],
+      "notes": "First run will open browser for OAuth consent. Tokens are cached after first auth."
+    }
   },
   "toolsets": [
     {
