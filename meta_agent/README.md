@@ -1,6 +1,6 @@
-# OnsetLab Meta-Agent
+# OnsetLab Meta-Agent (Registry-Based v2.0)
 
-The Meta-Agent is a LangGraph-powered backend service that discovers MCP servers and generates Colab notebooks for building AI agents.
+The Meta-Agent is a LangGraph-powered backend service that loads tools from a curated registry and generates Colab notebooks for building AI agents.
 
 ## Overview
 
@@ -8,18 +8,26 @@ The Meta-Agent is a LangGraph-powered backend service that discovers MCP servers
 User Problem Statement
          ↓
 ┌────────────────────────────────────────────────────┐
-│              META-AGENT (LangGraph)                │
+│         META-AGENT (Registry-Based)               │
 │                                                    │
 │  1. Parse problem → identify required services     │
-│  2. Search for MCP servers (Tavily)                │
-│  3. Evaluate results → MCP or API fallback         │
-│  4. Extract tool schemas from docs                 │
-│  5. Generate token setup guides                    │
-│  6. Generate Colab notebook                        │
+│  2. Load tools from registry (JSON files)         │
+│  3. Filter tools → LLM selects 15-20 relevant      │
+│  4. Human-in-the-Loop → User reviews/approves    │
+│  5. Generate token setup guides                   │
+│  6. Generate Colab notebook                       │
 └────────────────────────────────────────────────────┘
          ↓
 Colab Notebook + Token Guides
 ```
+
+## Key Features
+
+- ✅ **Registry-Based**: No web search, uses verified tool schemas
+- ✅ **Human-in-the-Loop**: User reviews and approves selected tools
+- ✅ **Simplified**: 6 nodes, 1 decision point, 3 LLM calls
+- ✅ **Fast**: No discovery delays, direct registry loading
+- ✅ **Reliable**: Pre-verified tools with correct schemas
 
 ## Installation
 
@@ -32,9 +40,10 @@ pip install -r requirements.txt
 
 | Key | Purpose | Get it from |
 |-----|---------|-------------|
-| `OPENAI_API_KEY` | LLM calls (parsing, extraction) | https://platform.openai.com/api-keys |
-| `TAVILY_API_KEY` | Web search for MCP servers | https://tavily.com/ |
+| `ANTHROPIC_API_KEY` | LLM calls (parsing, filtering) | https://console.anthropic.com/ |
 | `GITHUB_TOKEN` (optional) | Upload notebook to Gist | https://github.com/settings/tokens |
+
+**Note:** No Tavily API key needed anymore! We use a registry instead of web search.
 
 ## Usage
 
@@ -42,8 +51,7 @@ pip install -r requirements.txt
 
 ```bash
 # Set environment variables
-export OPENAI_API_KEY=sk-...
-export TAVILY_API_KEY=tvly-...
+export ANTHROPIC_API_KEY=sk-ant-...
 
 # Start the server
 uvicorn meta_agent.api.server:app --reload --port 8000
@@ -57,34 +65,38 @@ API Docs: http://localhost:8000/docs
 ### Use Programmatically
 
 ```python
-from meta_agent import run_meta_agent
+from meta_agent.graph import run_meta_agent_sync
 
-result = await run_meta_agent(
-    problem_statement="I need an agent that manages my Google Calendar",
+result = run_meta_agent_sync(
+    problem_statement="I need an agent that manages my Google Calendar and sends Slack messages",
     anthropic_api_key="sk-ant-...",
-    tavily_api_key="tvly-...",
 )
 
 # Result contains:
 # - colab_notebook: The generated notebook JSON
-# - mcp_servers: Discovered MCP servers
-# - api_servers: Services needing API implementation
+# - final_tools: User-approved tools
+# - mcp_servers: MCP server configs from registry
 # - token_guides: Setup instructions
-# - tool_schemas: All discovered tools
+# - registry_services: Services loaded
 ```
 
-### Run Tests
+### With Human-in-the-Loop
 
-```bash
-# Set environment variables
-export OPENAI_API_KEY=sk-...
-export TAVILY_API_KEY=tvly-...
+```python
+from meta_agent.graph import run_with_hitl
 
-# Run with default problem
-python -m meta_agent.test_meta_agent
+result = run_with_hitl(
+    problem_statement="Manage GitHub issues",
+    anthropic_api_key="sk-ant-...",
+)
 
-# Run with custom problem
-python -m meta_agent.test_meta_agent "I need an agent that sends Slack messages"
+# Will pause and show you selected tools:
+# "📋 Selected 8 tools: ..."
+# "Your feedback: " ← Type here
+# Options:
+#   - "looks good" → Continue
+#   - "add search_repositories" → Add that tool
+#   - "remove list_issues" → Remove that tool
 ```
 
 ## API Endpoints
@@ -98,7 +110,6 @@ Generate a Colab notebook for building an AI agent.
 {
     "problem_statement": "I need an agent that manages my calendar",
     "anthropic_api_key": "sk-ant-...",
-    "tavily_api_key": "tvly-...",
     "github_token": "ghp-...",  // Optional
     "upload_to_gist": true       // Optional
 }
@@ -110,10 +121,10 @@ Generate a Colab notebook for building an AI agent.
     "success": true,
     "colab_notebook": "...",
     "colab_notebook_url": "https://colab.research.google.com/gist/...",
+    "final_tools": [...],
     "mcp_servers": [...],
-    "api_servers": [...],
     "token_guides": [...],
-    "tool_count": 15,
+    "registry_services": ["github", "slack"],
     "errors": []
 }
 ```
@@ -126,18 +137,20 @@ meta_agent/
 ├── state.py             # LangGraph state schemas
 ├── graph.py             # LangGraph workflow definition
 ├── nodes/               # Graph nodes
-│   ├── parse_problem.py
-│   ├── search_mcp.py
-│   ├── evaluate_mcp.py
-│   ├── extract_schemas.py
-│   ├── mark_as_api.py
-│   ├── compile_results.py
-│   ├── generate_guides.py
-│   └── generate_notebook.py
-├── tools/               # LangChain tools
-│   ├── tavily_search.py
-│   ├── github_tools.py
-│   └── npm_tools.py
+│   ├── parse_problem.py      # Extract services from problem
+│   ├── load_registry.py      # Load tools from JSON files
+│   ├── filter_tools.py       # LLM selects relevant tools
+│   ├── process_feedback.py   # HITL: Process user feedback
+│   ├── generate_guides.py    # Generate token setup guides
+│   └── generate_notebook.py  # Generate Colab notebook
+├── registry/            # Tool registry (JSON files)
+│   ├── _builtin_memory.json
+│   ├── github.json
+│   ├── slack.json
+│   ├── google_calendar.json
+│   ├── tavily.json
+│   ├── filesystem.json
+│   └── notion.json
 ├── utils/               # Utilities
 │   └── gist_upload.py
 ├── api/                 # FastAPI server
@@ -152,36 +165,61 @@ meta_agent/
 parse_problem
      │
      ▼
-[has services?] ──No──> compile_results
-     │ Yes                    │
-     ▼                        │
-search_mcp_servers            │
-     │                        │
-     ▼                        │
-evaluate_mcp_results          │
-     │                        │
- ┌───┴───┐                    │
- ▼       ▼                    │
-good   no_mcp                 │
- │       │                    │
- ▼       ▼                    │
-extract  mark_as_api          │
-schemas      │                │
- │           │                │
- └─────┬─────┘                │
-       │                      │
-  [more services?] ──Yes──> loop
-       │ No                   │
-       └──────────────────────┘
-                │
-                ▼
-      generate_token_guides
-                │
-                ▼
-        generate_notebook
-                │
-                ▼
-               END
+load_registry      (Load from meta_agent/registry/*.json)
+     │
+     ▼
+filter_tools       (LLM selects 15-20 relevant tools)
+     │
+     ▼
+process_feedback   ← HITL: User reviews tools
+     │
+     ├─── approved ────► generate_token_guides
+     │
+     ├─── add_tools ────► load_registry (loop)
+     │
+     └─── remove_tools ──► filter_tools (loop)
+                              │
+                              ▼
+                    generate_token_guides
+                              │
+                              ▼
+                    generate_notebook
+                              │
+                              ▼
+                             END
+```
+
+## Registry
+
+The registry contains pre-verified MCP server definitions:
+
+- **memory** (built-in) - 4 tools
+- **github** - 17 tools
+- **slack** - 5 tools
+- **google_calendar** - 6 tools
+- **tavily** - 4 tools
+- **filesystem** - 8 tools
+- **notion** - 10 tools
+
+**Total: 54 tools**
+
+Each registry file (`meta_agent/registry/*.json`) contains:
+- Package information (npm/docker/binary)
+- Authentication details
+- Tool schemas with descriptions
+- Setup instructions
+
+## Run Tests
+
+```bash
+# Set environment variables
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Test registry loading
+python test_meta_agent_registry.py
+
+# Test full flow (requires API key)
+python -m meta_agent.test_meta_agent
 ```
 
 ## License
