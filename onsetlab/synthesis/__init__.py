@@ -1,37 +1,40 @@
 """
 OnsetLab Synthesis Module
 =========================
-LLM-powered generation of system prompts and training data.
+Training data and system prompt generation.
+
+Single-Tool Architecture:
+- One tool call per turn
+- Strong clarification handling
+- 75% single-tool, 25% edge cases
+- Concise prompts optimized for 3B models
 """
 
-from .prompt_generator import (
-    PromptGenerator,
-    PromptConfig,
-    generate_system_prompt,
-    generate_minimal_prompt,
-    # Single-Tool Architecture (v2.0)
-    generate_single_tool_prompt,
-    get_clarification_examples,
+# Prompt generation (concise, template-based)
+from .prompts import (
+    generate_prompt_for_3b,
+    generate_prompt_for_7b_plus,
+    get_default_prompt,
 )
+
+# Data generation
 from .data_generator import (
-    BatchedDataGenerator,
-    BatchGenConfig,
-    generate_training_data_batched,
-    recommend_examples,
+    DataGenerator,
+    DataGenConfig,
+    generate_training_data,
+    recommend_dataset_size,
+    print_dataset_recommendation,
 )
 
 __all__ = [
-    # Prompt generation
-    "PromptGenerator",
-    "PromptConfig",
-    "generate_system_prompt",
-    "generate_minimal_prompt",
-    # Single-Tool Architecture (v2.0)
-    "generate_single_tool_prompt",
-    "get_clarification_examples",
+    # Prompt generation (no LLM needed)
+    "generate_prompt_for_3b",
+    "generate_prompt_for_7b_plus",
+    "get_default_prompt",
     # Data generation
-    "BatchedDataGenerator",
-    "BatchGenConfig",
-    "generate_training_data_batched",
-    "recommend_examples",
+    "DataGenerator",
+    "DataGenConfig",
+    "generate_training_data",
+    "recommend_dataset_size",
+    "print_dataset_recommendation",
 ]

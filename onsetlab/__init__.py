@@ -46,9 +46,15 @@ from .runtime.packager import RuntimeType
 # Validation
 from .utils.validator import Validator, ValidationResult, validate_training_data
 
-# Low-level synthesis APIs
-from .synthesis.prompt_generator import PromptGenerator, generate_system_prompt, generate_minimal_prompt
-from .synthesis.data_generator import BatchedDataGenerator, BatchGenConfig, generate_training_data_batched
+# Synthesis APIs
+from .synthesis.prompts import generate_prompt_for_3b, generate_prompt_for_7b_plus
+from .synthesis.data_generator import (
+    DataGenerator, 
+    DataGenConfig, 
+    generate_training_data,
+    recommend_dataset_size,
+    print_dataset_recommendation,
+)
 
 # =============================================================================
 # Public API
@@ -60,8 +66,8 @@ __all__ = [
     "BuildConfig",
     "ToolSchema",
     "MCPServerConfig",
-    "APIToolSchema",     # For direct API endpoints
-    "APIServerConfig",   # For API-based services
+    "APIToolSchema",
+    "APIServerConfig",
     
     # Helpers
     "load_tools_from_file",
@@ -72,15 +78,19 @@ __all__ = [
     "SUPPORTED_MODELS",
     "RuntimeType",
     
-    # Advanced/Low-level (for power users)
+    # Validation
     "Validator",
     "ValidationResult",
     "validate_training_data",
-    "PromptGenerator",
-    "generate_system_prompt",
     
-    # Batched data generation (v3)
-    "BatchedDataGenerator",
-    "BatchGenConfig",
-    "generate_training_data_batched",
+    # Prompt generation (no LLM needed)
+    "generate_prompt_for_3b",
+    "generate_prompt_for_7b_plus",
+    
+    # Data generation
+    "DataGenerator",
+    "DataGenConfig",
+    "generate_training_data",
+    "recommend_dataset_size",
+    "print_dataset_recommendation",
 ]

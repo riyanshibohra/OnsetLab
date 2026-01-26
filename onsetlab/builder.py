@@ -24,8 +24,8 @@ from typing import Optional
 from pathlib import Path
 
 from .utils.schemas import ToolSchema, MCPServerConfig, APIServerConfig, APIToolSchema
-from .synthesis.prompt_generator import generate_minimal_prompt, PromptGenerator
-from .synthesis.data_generator import BatchedDataGenerator, BatchGenConfig
+from .synthesis.prompts import generate_prompt_for_3b
+from .synthesis.data_generator import DataGenerator, DataGenConfig
 from .utils.validator import Validator
 from .training.unsloth_trainer import UnslothTrainer, TrainerConfig, SUPPORTED_MODELS
 from .runtime.packager import AgentPackager, PackageConfig, RuntimeType
@@ -35,16 +35,8 @@ from .runtime.packager import AgentPackager, PackageConfig, RuntimeType
 class BuildConfig:
     """Configuration for the agent building pipeline."""
     
-    # Data generation settings (v3 batched generator)
-    num_examples: int = None  # Auto-calculated from tool count if None
-    batch_size: int = 10      # Examples per LLM call (10x fewer API calls)
-    use_llm_for_prompt: bool = True  # Use LLM for comprehensive system prompt (recommended)
-    
-    # Prompt settings
-    # "names_only" = Just tool names (shortest, for 20+ tools)
-    # "minimal" = Names + description (default, balanced)
-    # "full" = Names + description + params (verbose, for <10 tools)
-    prompt_detail_level: str = "minimal"
+    # Data generation settings
+    num_examples: int = None  # Auto-calculated from tool count if None (25/tool)
     
     # Resume from existing data (skip prompt + data generation)
     # Set to path containing train.jsonl, validation.jsonl, test.jsonl, system_prompt.txt
@@ -381,7 +373,8 @@ class AgentBuilder:
             if self.config.num_examples:
                 print(f"Target examples: {self.config.num_examples}")
             else:
-                auto_examples = BatchGenConfig.calculate_optimal_examples(len(self.tools))
+                config = DataGenConfig()
+                auto_examples = config.calculate_total(len(self.tools))
                 print(f"Target examples: {auto_examples} (auto-calculated for {len(self.tools)} tools)")
             # Step 1: Generate system prompt
             self._step_1_generate_prompt()
@@ -467,25 +460,16 @@ class AgentBuilder:
         return agent
     
     def _step_1_generate_prompt(self):
-        """Step 1: Generate system prompt."""
+        """Step 1: Generate system prompt (concise, optimized for 3B models)."""
         print("\n📝 Step 1: Generating system prompt...")
-        print(f"   Detail level: {self.config.prompt_detail_level}")
         
-        if self.config.use_llm_for_prompt:
-            generator = PromptGenerator(api_key=self.api_key)
-            self._system_prompt = generator.generate(
-                self.problem_statement,
-                self.tools,
-                use_llm=True
-            )
-            print(f"   ✅ Generated LLM-based prompt ({len(self._system_prompt)} chars)")
-        else:
-            self._system_prompt = generate_minimal_prompt(
-                self.problem_statement,
-                self.tools,
-                detail_level=self.config.prompt_detail_level
-            )
-            print(f"   ✅ Generated template-based prompt ({len(self._system_prompt)} chars)")
+        # Use concise prompt optimized for 3B models
+        # No LLM needed - template-based is faster, free, and consistent
+        self._system_prompt = generate_prompt_for_3b(
+            problem_statement=self.problem_statement,
+            tools=self.tools
+        )
+        print(f"   ✅ Generated concise prompt ({len(self._system_prompt)} chars, ~{len(self._system_prompt.split())} words)")
     
     def _load_existing_data(self):
         """Load existing data from a previous run (skip generation steps)."""
@@ -529,31 +513,28 @@ class AgentBuilder:
             print(f"   📄 Test: {self._test_data_path}")
     
     def _step_2_generate_data(self):
-        """Step 2: Generate synthetic training data using batched v3 generator."""
+        """Step 2: Generate synthetic training data using single-tool generator."""
         
         # Auto-calculate examples based on tool count if not specified
+        gen_config = DataGenConfig()
+        
         num_examples = self.config.num_examples
         if num_examples is None:
-            num_examples = BatchGenConfig.calculate_optimal_examples(len(self.tools))
+            num_examples = gen_config.calculate_total(len(self.tools))
             print(f"\n📊 Step 2: Auto-calculated {num_examples} examples for {len(self.tools)} tools")
+            print(f"   (25 examples/tool × 75% single-tool + 25% edge cases)")
         else:
-            print(f"\n📊 Step 2: Generating {num_examples} training examples (batched)...")
+            print(f"\n📊 Step 2: Generating {num_examples} training examples...")
         
-        print(f"   Batch size: {self.config.batch_size} examples/call")
-        print(f"   Expected API calls: ~{num_examples // self.config.batch_size}")
+        print(f"   Batch size: {gen_config.batch_size} examples/call")
+        print(f"   Expected API calls: ~{num_examples // gen_config.batch_size}")
         
         # Ensure output directory exists
         os.makedirs(self.config.output_dir, exist_ok=True)
         
-        # Create v3 batched generator config
-        gen_config = BatchGenConfig(
-            total_examples=num_examples,
-            batch_size=self.config.batch_size,
-        )
-        
-        # Create v3 generator (flat tool list, no server context)
+        # Create data generator
         # CRITICAL: Pass the system prompt so it's included in training examples!
-        generator = BatchedDataGenerator(
+        generator = DataGenerator(
             tools=self.tools,
             problem_statement=self.problem_statement,
             api_key=self.api_key,
