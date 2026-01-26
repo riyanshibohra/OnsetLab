@@ -61,40 +61,82 @@ def filter_tools(state: MetaAgentState) -> dict:
     """
     Filter discovered tools to only those relevant to the problem statement.
     
-    Takes all tool_schemas and mcp_servers, filters tools based on
-    relevance to problem_statement, and updates the state.
+    Can operate in two modes:
+    1. Initial filtering: Use LLM to select tools from all_tools
+    2. Feedback mode: Adjust existing filtered_tools based on user's add/remove requests
     
     Args:
         state: Current MetaAgentState
         
     Returns:
-        State update with filtered tool_schemas and updated mcp_servers
+        State update with filtered_tools (renamed from filtered_tool_schemas for consistency)
     """
     problem_statement = state.get("problem_statement", "")
-    tool_schemas = state.get("tool_schemas", [])
+    all_tools = state.get("all_tools", [])  # From load_registry
+    tool_schemas = state.get("tool_schemas", [])  # Legacy field, prefer all_tools
     mcp_servers = state.get("mcp_servers", [])
     api_servers = state.get("api_servers", [])
     api_key = state["anthropic_api_key"]
     
+    # Check if coming from feedback loop
+    tools_to_add = state.get("tools_to_add", [])
+    tools_to_remove = state.get("tools_to_remove", [])
+    
+    # Use all_tools if available (from new registry flow), else fall back to tool_schemas (legacy)
+    source_tools = all_tools if all_tools else tool_schemas
+    
+    # FEEDBACK MODE: User requested changes
+    if tools_to_remove:
+        print(f"\n➖ Removing {len(tools_to_remove)} tools...")
+        current_tools = state.get("filtered_tools", [])
+        filtered_tools = [t for t in current_tools if t["name"] not in tools_to_remove]
+        print(f"   ✅ Removed. Now have {len(filtered_tools)} tools")
+        
+        return {
+            "filtered_tools": filtered_tools,
+            "filtered_tool_schemas": filtered_tools,  # Legacy field
+            "tools_to_remove": []  # Clear for next iteration
+        }
+    
+    if tools_to_add:
+        print(f"\n➕ Adding {len(tools_to_add)} tools...")
+        current_tools = state.get("filtered_tools", [])
+        
+        for tool_name in tools_to_add:
+            tool = next((t for t in source_tools if t["name"] == tool_name), None)
+            if tool and tool not in current_tools:
+                current_tools.append(tool)
+                print(f"   ✅ Added {tool_name}")
+            elif not tool:
+                print(f"   ⚠️ Tool '{tool_name}' not found in registry")
+        
+        return {
+            "filtered_tools": current_tools,
+            "filtered_tool_schemas": current_tools,  # Legacy field
+            "tools_to_add": []  # Clear for next iteration
+        }
+    
+    # INITIAL MODE: LLM filters from scratch
     print("\n🔍 Filtering tools for relevance...")
     print(f"   📝 Problem: {problem_statement[:100]}...")
-    print(f"   📦 Total tools before filtering: {len(tool_schemas)}")
+    print(f"   📦 Total tools before filtering: {len(source_tools)}")
     
-    if len(tool_schemas) <= 20:
-        print(f"   ✅ Already within limit ({len(tool_schemas)} tools), skipping filter")
-        # Still set filtered fields to the full list (no filtering needed)
+    if len(source_tools) <= 20:
+        print(f"   ✅ Already within limit ({len(source_tools)} tools), skipping filter")
         return {
+            "filtered_tools": source_tools,
+            "filtered_tool_schemas": source_tools,  # Legacy
             "filtered_mcp_servers": mcp_servers,
             "filtered_api_servers": api_servers,
-            "filtered_tool_schemas": tool_schemas,
         }
     
     # Format tools for LLM
     tools_list = []
-    for tool in tool_schemas:
+    for tool in source_tools:
         tools_list.append({
             "name": tool.get("name"),
             "description": tool.get("description", "")[:100],
+            "service": tool.get("_service", "unknown")
         })
     
     try:
@@ -126,65 +168,43 @@ Respond with valid JSON."""}
         result = json.loads(response_text.strip())
         
         selected_tool_names = {t["name"] for t in result.get("selected_tools", [])}
-        excluded_count = result.get("excluded_count", 0)
         reasoning = result.get("reasoning", "")
         
-        # Filter tool_schemas
-        filtered_schemas = [
-            tool for tool in tool_schemas
+        # Filter tools
+        filtered_tools = [
+            tool for tool in source_tools
             if tool.get("name") in selected_tool_names
         ]
         
-        # Also filter tools in mcp_servers
-        filtered_mcp_servers = []
-        for server in mcp_servers:
-            server_tools = server.get("tools", [])
-            filtered_server_tools = [
-                t for t in server_tools
-                if t.get("name") in selected_tool_names
-            ]
-            # Create updated server with filtered tools
-            filtered_server = dict(server)
-            filtered_server["tools"] = filtered_server_tools
-            filtered_mcp_servers.append(filtered_server)
-        
-        # Filter tools in api_servers
-        filtered_api_servers = []
-        for server in api_servers:
-            endpoints = server.get("endpoints", [])
-            filtered_endpoints = [
-                e for e in endpoints
-                if e.get("name") in selected_tool_names
-            ]
-            filtered_server = dict(server)
-            filtered_server["endpoints"] = filtered_endpoints
-            filtered_api_servers.append(filtered_server)
-        
-        print(f"   ✅ Filtered to {len(filtered_schemas)} relevant tools")
-        print(f"   🗑️ Excluded {len(tool_schemas) - len(filtered_schemas)} irrelevant tools")
+        print(f"   ✅ Filtered to {len(filtered_tools)} relevant tools")
+        print(f"   🗑️ Excluded {len(source_tools) - len(filtered_tools)} tools")
         
         if reasoning:
             print(f"   💭 Strategy: {reasoning[:100]}...")
         
-        # Show selected tools
-        print(f"   📋 Selected tools:")
-        for tool_info in result.get("selected_tools", [])[:10]:
-            print(f"      • {tool_info['name']}: {tool_info.get('reason', '')[:40]}")
-        if len(result.get("selected_tools", [])) > 10:
-            print(f"      ... and {len(result.get('selected_tools', [])) - 10} more")
+        # Show selected tools by service
+        by_service = {}
+        for tool in filtered_tools:
+            service = tool.get("_service", "unknown")
+            by_service[service] = by_service.get(service, 0) + 1
+        
+        print(f"   📋 Selected by service:")
+        for service, count in sorted(by_service.items()):
+            print(f"      • {service}: {count} tools")
         
         return {
-            "filtered_tool_schemas": filtered_schemas,
-            "filtered_mcp_servers": filtered_mcp_servers,
-            "filtered_api_servers": filtered_api_servers,
+            "filtered_tools": filtered_tools,
+            "filtered_tool_schemas": filtered_tools,  # Legacy field for backwards compat
+            "filtered_mcp_servers": mcp_servers,
+            "filtered_api_servers": api_servers,
         }
         
     except Exception as e:
         print(f"   ❌ Failed to filter tools: {e}")
-        print(f"   ⚠️ Using all {len(tool_schemas)} tools")
-        # On error, use unfiltered results
+        print(f"   ⚠️ Using all {len(source_tools)} tools")
         return {
+            "filtered_tools": source_tools,
+            "filtered_tool_schemas": source_tools,
             "filtered_mcp_servers": mcp_servers,
             "filtered_api_servers": api_servers,
-            "filtered_tool_schemas": tool_schemas,
         }

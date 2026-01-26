@@ -63,54 +63,43 @@ class TokenGuide(TypedDict):
 
 class MetaAgentState(TypedDict, total=False):
     """
-    State for the Meta-Agent LangGraph.
+    State for the Meta-Agent LangGraph (Registry-Based v2.0).
     
-    This state is passed between nodes and accumulates results
-    as the agent discovers MCP servers and generates the notebook.
-    
-    Note: total=False makes all fields optional, which is needed
-    for LangGraph state updates where we only return changed fields.
+    Simplified state for registry-based tool loading with HITL.
     """
     # Input (required at start)
     problem_statement: str
     anthropic_api_key: str
-    tavily_api_key: str
     
-    # Parsed from problem
-    identified_services: list[str]           # ["google_calendar", "gmail", "slack"]
+    # After analyze_problem
+    identified_services: list[str]           # ["github", "slack", "google_calendar"]
     
-    # Discovery state (loop control)
-    current_service_index: int
-    current_service: Optional[str]           # Current service being processed
-    search_results: Optional[str]            # Raw search results for current service
-    result_quality: Optional[str]            # "good_mcp" | "no_mcp"
+    # After load_registry
+    all_tools: list[dict]                    # All tools from registry files
+    mcp_servers: list[dict]                  # MCP server configs from registry
+    registry_services: list[str]             # Successfully loaded services
     
-    # Temporary evaluation results (passed between evaluate_mcp and extract_schemas/mark_as_api)
-    _eval_package_name: Optional[str]
-    _eval_github_url: Optional[str]
-    _eval_auth_type: Optional[str]
-    _eval_env_var: Optional[str]
-    _eval_trust_level: Optional[str]
-    _eval_stars: Optional[int]
-    _eval_confidence: Optional[float]
-    _eval_reasoning: Optional[str]
-    _eval_candidates: list[dict]          # ALL candidates for retry logic
-    _eval_candidate_index: int            # Current candidate being tried
+    # After filter_tools
+    filtered_tools: list[dict]               # LLM-selected relevant tools
     
-    # Accumulated results (using Annotated[..., add] for reducer)
-    mcp_servers: Annotated[list[MCPServerDiscovery], add]
-    api_servers: Annotated[list[APIServerFallback], add]
-    tool_schemas: Annotated[list[dict], add]
-    
-    # Filtered results (NOT accumulated - set by filter_tools, used by generate_notebook)
-    filtered_mcp_servers: list[MCPServerDiscovery]
-    filtered_api_servers: list[APIServerFallback]
-    filtered_tool_schemas: list[dict]
+    # HITL (Human-in-the-Loop)
+    user_feedback: str                       # User input: "looks good" / "add X" / "remove Y"
+    feedback_action: str                     # "approved" / "add_tools" / "remove_tools"
+    tools_to_add: list[str]                  # Tool names to add
+    tools_to_remove: list[str]               # Tool names to remove
+    final_tools: list[dict]                  # User-approved final tool list
     
     # Output artifacts
     token_guides: list[TokenGuide]
     colab_notebook: str
     colab_notebook_url: Optional[str]
+    
+    # Legacy fields (for backwards compatibility with old nodes)
+    tool_schemas: list[dict]                 # Same as all_tools
+    filtered_tool_schemas: list[dict]        # Same as filtered_tools
+    filtered_mcp_servers: list[dict]
+    filtered_api_servers: list[dict]
+    api_servers: list[dict]
     
     # Error tracking
     errors: Annotated[list[str], add]
@@ -119,7 +108,6 @@ class MetaAgentState(TypedDict, total=False):
 def create_initial_state(
     problem_statement: str,
     anthropic_api_key: str,
-    tavily_api_key: str,
 ) -> MetaAgentState:
     """
     Create a properly initialized state for the meta-agent.
@@ -127,7 +115,6 @@ def create_initial_state(
     Args:
         problem_statement: Description of what the agent should do
         anthropic_api_key: Anthropic API key for Claude LLM calls
-        tavily_api_key: Tavily API key for web search
         
     Returns:
         Initialized MetaAgentState
@@ -136,41 +123,32 @@ def create_initial_state(
         # Input
         "problem_statement": problem_statement,
         "anthropic_api_key": anthropic_api_key,
-        "tavily_api_key": tavily_api_key,
         
-        # Initialize lists and counters
+        # Initialize
         "identified_services": [],
-        "current_service_index": 0,
-        "current_service": None,
-        "search_results": None,
-        "result_quality": None,
-        
-        # Temp fields
-        "_eval_package_name": None,
-        "_eval_github_url": None,
-        "_eval_auth_type": None,
-        "_eval_env_var": None,
-        "_eval_trust_level": None,
-        "_eval_stars": None,
-        "_eval_confidence": None,
-        "_eval_reasoning": None,
-        "_eval_candidates": [],           # ALL candidates for retry
-        "_eval_candidate_index": 0,       # Current candidate index
-        
-        # Accumulated results (start empty)
+        "all_tools": [],
         "mcp_servers": [],
-        "api_servers": [],
-        "tool_schemas": [],
+        "registry_services": [],
+        "filtered_tools": [],
         
-        # Filtered results (set by filter_tools)
-        "filtered_mcp_servers": [],
-        "filtered_api_servers": [],
-        "filtered_tool_schemas": [],
+        # HITL
+        "user_feedback": "",
+        "feedback_action": "",
+        "tools_to_add": [],
+        "tools_to_remove": [],
+        "final_tools": [],
         
-        # Output artifacts
+        # Output
         "token_guides": [],
         "colab_notebook": "",
         "colab_notebook_url": None,
+        
+        # Legacy (backwards compat)
+        "tool_schemas": [],
+        "filtered_tool_schemas": [],
+        "filtered_mcp_servers": [],
+        "filtered_api_servers": [],
+        "api_servers": [],
         
         # Errors
         "errors": [],

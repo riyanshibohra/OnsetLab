@@ -1,7 +1,7 @@
 """
 Meta-Agent Graph Visualization
 ==============================
-Creates a visual flowchart of the LangGraph workflow.
+Creates a visual flowchart of the LangGraph workflow (Registry-Based v2.0).
 """
 
 import matplotlib
@@ -14,11 +14,11 @@ import numpy as np
 
 
 def create_graph_visualization():
-    """Create a beautiful visualization of the meta-agent graph."""
+    """Create a beautiful visualization of the registry-based meta-agent graph."""
     
-    fig, ax = plt.subplots(1, 1, figsize=(14, 18))
-    ax.set_xlim(0, 14)
-    ax.set_ylim(0, 18)
+    fig, ax = plt.subplots(1, 1, figsize=(12, 14))
+    ax.set_xlim(0, 12)
+    ax.set_ylim(0, 14)
     ax.axis('off')
     
     # Colors - Dark theme inspired
@@ -29,7 +29,7 @@ def create_graph_visualization():
         'decision_text': '#ffffff',
         'start_end': '#059669',      # Emerald
         'arrow': '#64748b',
-        'loop': '#f59e0b',           # Amber
+        'hitl': '#f59e0b',           # Amber (HITL)
         'bg': '#0f172a',             # Slate dark
         'title': '#e2e8f0',
     }
@@ -89,91 +89,72 @@ def create_graph_visualization():
                    color=arrow_color, fontstyle='italic')
     
     # Title
-    ax.text(7, 17.3, '🤖 OnsetLab Meta-Agent Workflow', 
-           ha='center', va='center', fontsize=20, 
+    ax.text(6, 13.3, '🤖 OnsetLab Meta-Agent (Registry-Based)', 
+           ha='center', va='center', fontsize=18, 
            color=colors['title'], fontweight='bold')
-    ax.text(7, 16.7, 'MCP Discovery & Agent Generation Pipeline', 
-           ha='center', va='center', fontsize=12, 
+    ax.text(6, 12.8, 'Simplified Workflow with Human-in-the-Loop', 
+           ha='center', va='center', fontsize=11, 
            color='#94a3b8', fontstyle='italic')
     
     # ===== NODES =====
     
     # START
-    draw_node(7, 15.5, 'START', 'start_end', width=2, height=0.6)
+    draw_node(6, 12, 'START', 'start_end', width=2, height=0.6)
     
     # parse_problem
-    draw_node(7, 14.3, 'parse_problem', 'node')
-    draw_arrow((7, 15.2), (7, 14.7))
+    draw_node(6, 10.8, 'parse_problem', 'node')
+    ax.text(8.5, 10.8, 'Extract services', fontsize=8, color='#94a3b8', style='italic')
+    draw_arrow((6, 11.7), (6, 11.2))
     
-    # Decision: has services?
-    draw_node(7, 13, '?', 'decision')
-    ax.text(7, 12.2, 'has services?', ha='center', fontsize=9, color='#94a3b8')
-    draw_arrow((7, 13.9), (7, 13.5))
-    
-    # No services -> compile_results (shortcut)
-    draw_node(10.5, 13, 'compile_results\n(skip to end)', 'node', width=3)
-    draw_arrow((7.5, 13), (9, 13), label='no')
-    
-    # Yes -> search_mcp_servers
-    draw_node(7, 11.2, 'search_mcp_servers', 'node')
-    draw_arrow((7, 12.5), (7, 11.6), label='yes')
-    
-    # evaluate_mcp_results
-    draw_node(7, 9.8, 'evaluate_mcp_results', 'node')
-    draw_arrow((7, 10.8), (7, 10.2))
-    
-    # Decision: good_mcp?
-    draw_node(7, 8.5, '?', 'decision')
-    ax.text(7, 7.7, 'good_mcp?', ha='center', fontsize=9, color='#94a3b8')
-    draw_arrow((7, 9.4), (7, 9.0))
-    
-    # good_mcp -> extract_schemas
-    draw_node(4.5, 7, 'extract_schemas', 'node')
-    draw_arrow((6.5, 8.3), (5.3, 7.4), label='yes', curved=-0.2)
-    
-    # no_mcp -> mark_as_api
-    draw_node(9.5, 7, 'mark_as_api', 'node')
-    draw_arrow((7.5, 8.3), (8.7, 7.4), label='no', curved=0.2)
-    
-    # Decision: more services?
-    draw_node(7, 5.5, '?', 'decision')
-    ax.text(7, 4.7, 'more services?', ha='center', fontsize=9, color='#94a3b8')
-    draw_arrow((4.5, 6.6), (6.5, 5.8), curved=-0.1)
-    draw_arrow((9.5, 6.6), (7.5, 5.8), curved=0.1)
-    
-    # Loop back to search
-    draw_arrow((6.5, 5.7), (5, 10.5), color=colors['loop'], curved=-0.5, label='yes')
-    draw_arrow((5, 10.5), (6.2, 11.2), color=colors['loop'], curved=-0.2)
-    
-    # compile_results (main path)
-    draw_node(7, 4, 'compile_results', 'node')
-    draw_arrow((7, 5.0), (7, 4.4), label='no')
-    
-    # Connect shortcut to main compile
-    draw_arrow((10.5, 12.4), (10.5, 4), curved=0)
-    draw_arrow((10.5, 4), (8.4, 4), curved=0)
+    # load_registry
+    draw_node(6, 9.6, 'load_registry', 'node')
+    ax.text(8.5, 9.6, 'Load from JSON', fontsize=8, color='#94a3b8', style='italic')
+    draw_arrow((6, 10.4), (6, 10.0))
     
     # filter_tools
-    draw_node(7, 2.8, 'filter_tools', 'node')
-    ax.text(9.2, 2.8, '📋 Max 15-20 tools', fontsize=8, color='#94a3b8')
-    draw_arrow((7, 3.6), (7, 3.2))
+    draw_node(6, 8.4, 'filter_tools', 'node')
+    ax.text(8.5, 8.4, 'LLM selects 15-20', fontsize=8, color='#94a3b8', style='italic')
+    draw_arrow((6, 9.2), (6, 8.8))
     
-    # generate_token_guides
-    draw_node(7, 1.6, 'generate_token_guides', 'node')
-    draw_arrow((7, 2.4), (7, 2.0))
+    # process_feedback (HITL)
+    draw_node(6, 7.2, 'process_feedback', 'hitl')
+    ax.text(8.5, 7.2, '👤 User reviews', fontsize=8, color='#fbbf24', style='italic', fontweight='bold')
+    draw_arrow((6, 8.0), (6, 7.6))
+    
+    # Decision: feedback action
+    draw_node(6, 6, '?', 'decision')
+    ax.text(6, 5.2, 'feedback?', ha='center', fontsize=9, color='#94a3b8')
+    draw_arrow((6, 6.8), (6, 6.5))
+    
+    # Routes from decision
+    # approved -> generate_token_guides
+    draw_node(6, 4.2, 'generate_token_guides', 'node')
+    draw_arrow((6, 5.5), (6, 4.6), label='approved')
+    
+    # add_tools -> loop back to load_registry
+    draw_node(3, 6, 'load_registry', 'node', width=2.2, height=0.6)
+    draw_arrow((5.5, 6), (4.1, 6), label='add', curved=-0.1)
+    draw_arrow((3, 6.3), (3, 9.3), color=colors['hitl'], curved=-0.3)
+    draw_arrow((3, 9.3), (4.5, 9.6), color=colors['hitl'], curved=-0.1)
+    
+    # remove_tools -> loop back to filter_tools
+    draw_node(9, 6, 'filter_tools', 'node', width=2.2, height=0.6)
+    draw_arrow((6.5, 6), (7.9, 6), label='remove', curved=0.1)
+    draw_arrow((9, 6.3), (9, 8.1), color=colors['hitl'], curved=0.3)
+    draw_arrow((9, 8.1), (7.5, 8.4), color=colors['hitl'], curved=0.1)
     
     # generate_notebook
-    draw_node(7, 0.4, 'generate_notebook', 'node')
-    draw_arrow((7, 1.2), (7, 0.8))
+    draw_node(6, 3, 'generate_notebook', 'node')
+    draw_arrow((6, 3.8), (6, 3.4))
     
     # END
-    draw_node(7, -0.8, 'END', 'start_end', width=2, height=0.6)
-    draw_arrow((7, 0), (7, -0.5))
+    draw_node(6, 1.8, 'END', 'start_end', width=2, height=0.6)
+    draw_arrow((6, 2.6), (6, 2.1))
     
     # Legend
-    legend_x = 1.5
-    legend_y = 3
-    ax.text(legend_x, legend_y + 1, 'Legend:', fontsize=11, color=colors['title'], fontweight='bold')
+    legend_x = 1
+    legend_y = 3.5
+    ax.text(legend_x, legend_y + 0.8, 'Legend:', fontsize=11, color=colors['title'], fontweight='bold')
     
     # Legend items
     draw_node(legend_x, legend_y, '', 'node', width=0.8, height=0.4)
@@ -182,12 +163,20 @@ def create_graph_visualization():
     draw_node(legend_x, legend_y - 0.7, '', 'decision')
     ax.text(legend_x + 0.8, legend_y - 0.7, 'Decision', fontsize=9, color='#94a3b8', va='center')
     
-    draw_node(legend_x, legend_y - 1.4, '', 'start_end', width=0.8, height=0.4)
-    ax.text(legend_x + 0.8, legend_y - 1.4, 'Start/End', fontsize=9, color='#94a3b8', va='center')
+    draw_node(legend_x, legend_y - 1.4, '', 'hitl', width=0.8, height=0.4)
+    ax.text(legend_x + 0.8, legend_y - 1.4, 'HITL', fontsize=9, color='#94a3b8', va='center')
     
-    ax.plot([legend_x - 0.3, legend_x + 0.3], [legend_y - 2.1, legend_y - 2.1], 
-            color=colors['loop'], linewidth=3)
-    ax.text(legend_x + 0.8, legend_y - 2.1, 'Loop Back', fontsize=9, color='#94a3b8', va='center')
+    draw_node(legend_x, legend_y - 2.1, '', 'start_end', width=0.8, height=0.4)
+    ax.text(legend_x + 0.8, legend_y - 2.1, 'Start/End', fontsize=9, color='#94a3b8', va='center')
+    
+    ax.plot([legend_x - 0.3, legend_x + 0.3], [legend_y - 2.8, legend_y - 2.8], 
+            color=colors['hitl'], linewidth=3)
+    ax.text(legend_x + 0.8, legend_y - 2.8, 'Feedback Loop', fontsize=9, color='#94a3b8', va='center')
+    
+    # Stats
+    stats_y = 0.5
+    ax.text(6, stats_y, '6 Nodes | 1 Decision | 3 LLM Calls', 
+           ha='center', fontsize=9, color='#64748b', style='italic')
     
     # Save
     plt.tight_layout()
