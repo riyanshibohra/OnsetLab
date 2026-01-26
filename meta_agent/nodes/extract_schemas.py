@@ -46,6 +46,80 @@ Determine if the tools are relevant FOR THAT SERVICE'S ROLE in the problem.
 Respond with valid JSON."""
 
 
+def detect_server_type(github_url: str, is_npm_package: bool) -> tuple[str, str]:
+    """
+    Detect the server type and Docker image based on repository contents.
+    
+    Returns:
+        Tuple of (server_type, docker_image)
+        server_type: "npm", "docker", "go", "python", "binary"
+        docker_image: Docker image URL if applicable
+    """
+    if is_npm_package:
+        return "npm", ""
+    
+    # Check for Go (go.mod)
+    try:
+        go_mod = fetch_github_file_sync(github_url, "go.mod")
+        if go_mod and "module " in go_mod:
+            # Try to find Docker image from README or Dockerfile
+            docker_image = ""
+            # Parse owner/repo from GitHub URL
+            if "github.com" in github_url:
+                parts = github_url.split("github.com/")[-1].split("/")
+                if len(parts) >= 2:
+                    owner, repo = parts[0], parts[1].split("?")[0].split("#")[0]
+                    # Common pattern: ghcr.io/owner/repo
+                    docker_image = f"ghcr.io/{owner}/{repo}"
+            return "docker", docker_image  # Go binary, use Docker wrapper
+    except:
+        pass
+    
+    # Check for Python (pyproject.toml or setup.py)
+    try:
+        pyproject = fetch_github_file_sync(github_url, "pyproject.toml")
+        if pyproject and "[project]" in pyproject:
+            docker_image = ""
+            if "github.com" in github_url:
+                parts = github_url.split("github.com/")[-1].split("/")
+                if len(parts) >= 2:
+                    owner, repo = parts[0], parts[1].split("?")[0].split("#")[0]
+                    docker_image = f"ghcr.io/{owner}/{repo}"
+            return "docker", docker_image  # Python, use Docker wrapper
+    except:
+        pass
+    
+    try:
+        setup_py = fetch_github_file_sync(github_url, "setup.py")
+        if setup_py and "setup(" in setup_py:
+            docker_image = ""
+            if "github.com" in github_url:
+                parts = github_url.split("github.com/")[-1].split("/")
+                if len(parts) >= 2:
+                    owner, repo = parts[0], parts[1].split("?")[0].split("#")[0]
+                    docker_image = f"ghcr.io/{owner}/{repo}"
+            return "docker", docker_image
+    except:
+        pass
+    
+    # Check for Dockerfile (indicates Docker distribution)
+    try:
+        dockerfile = fetch_github_file_sync(github_url, "Dockerfile")
+        if dockerfile and "FROM " in dockerfile:
+            docker_image = ""
+            if "github.com" in github_url:
+                parts = github_url.split("github.com/")[-1].split("/")
+                if len(parts) >= 2:
+                    owner, repo = parts[0], parts[1].split("?")[0].split("#")[0]
+                    docker_image = f"ghcr.io/{owner}/{repo}"
+            return "docker", docker_image
+    except:
+        pass
+    
+    # Default to NPM (most MCP servers are npm packages)
+    return "npm", ""
+
+
 def fetch_readme_from_github(github_url: str) -> str:
     """
     Fetch README from GitHub URL, handling subdirectory URLs.
@@ -197,7 +271,7 @@ Respond with JSON in this exact format:
             "description": "Brief description of what this tool does",
             "parameters": {
                 "param1": {"type": "string", "description": "Parameter description"},
-                "param2": {"type": "string", "description": "Parameter description"}
+                "param2": {"type": "string", "description": "Description", "enum": ["VALUE1", "VALUE2"]}
             },
             "required_params": ["param1"]
         }
@@ -206,6 +280,11 @@ Respond with JSON in this exact format:
     "env_vars": ["SERVICE_TOKEN", "SERVICE_ID"],
     "setup_notes": "Any setup notes"
 }
+
+## PARAMETER ENUM VALUES:
+- If a parameter has a fixed set of valid values (enum), include them in UPPERCASE
+- Example: "state": {"type": "string", "enum": ["OPEN", "CLOSED", "ALL"], "description": "Issue state"}
+- Common enums: issue states, order statuses, event types, sort directions
 
 ## IMPORTANT RULES:
 - Extract the ACTUAL tools defined for THIS specific MCP server
@@ -432,14 +511,23 @@ Respond with valid JSON only. No markdown, no explanation, just the JSON object.
     # Use the discovered NPM package name if available, otherwise the original
     final_package_name = npm_package_name or package_name or f"unknown-{current_service}"
     
+    # Detect server type (npm vs docker vs go etc.)
+    server_type, docker_image = detect_server_type(actual_github_url, is_npm_package)
+    
+    if server_type != "npm":
+        print(f"      🐳 Detected {server_type} server (Docker: {docker_image or 'TBD'})")
+    
     mcp_discovery = {
         "service": current_service,
         "package": final_package_name,
+        "server_type": server_type,  # "npm", "docker", "go", "python", "binary"
         "auth_type": auth_type,
         "env_vars": all_env_vars,  # Now a LIST of all required env vars
         "tools": tools,
         "setup_url": actual_github_url,
         "confidence": confidence,
+        "docker_image": docker_image if server_type != "npm" else None,
+        "repo_url": actual_github_url,
     }
     
     return tools, mcp_discovery, True, "Success"

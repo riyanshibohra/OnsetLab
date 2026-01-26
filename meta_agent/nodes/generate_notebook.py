@@ -168,8 +168,11 @@ def generate_notebook(state: MetaAgentState) -> dict:
     config_lines = [
         "import os\n",
         "\n",
-        "# OpenAI API Key (for training data generation)\n",
+        "# LLM API Key for training data generation (choose ONE)\n",
+        "# Option 1: OpenAI (gpt-4o)\n",
         "os.environ['OPENAI_API_KEY'] = ''  # @param {type:\"string\"}\n",
+        "# Option 2: Anthropic (claude-sonnet-4.5) - RECOMMENDED for better quality\n",
+        "os.environ['ANTHROPIC_API_KEY'] = ''  # @param {type:\"string\"}\n",
         "\n",
     ]
     
@@ -269,6 +272,12 @@ def generate_notebook(state: MetaAgentState) -> dict:
     for server in mcp_servers:
         servers_code.append(f"    MCPServerConfig(\n")
         servers_code.append(f"        package=\"{server.get('package', '')}\",\n")
+        
+        # Include server_type (npm, docker, go, etc.)
+        server_type = server.get('server_type', 'npm')
+        if server_type != 'npm':
+            servers_code.append(f"        server_type=\"{server_type}\",\n")
+        
         servers_code.append(f"        auth_type=\"{server.get('auth_type', 'none')}\",\n")
         
         # Handle both old (env_var) and new (env_vars) formats
@@ -287,6 +296,19 @@ def generate_notebook(state: MetaAgentState) -> dict:
         servers_code.append(f"        description=\"{server.get('service', '').replace('_', ' ').title()} integration\",\n")
         if server.get('setup_url'):
             servers_code.append(f"        setup_url=\"{server['setup_url']}\",\n")
+        
+        # Include Docker image for non-npm servers
+        docker_image = server.get('docker_image')
+        if docker_image:
+            servers_code.append(f"        docker_image=\"{docker_image}\",\n")
+        
+        # Include tools for this server
+        server_tools = server.get('tools', [])
+        if server_tools:
+            tool_names = [t.get('name', t) if isinstance(t, dict) else t for t in server_tools]
+            tool_names_str = ", ".join(f'"{name}"' for name in tool_names)
+            servers_code.append(f"        tools=[{tool_names_str}],\n")
+        
         servers_code.append(f"    ),\n")
     
     servers_code.append("]\n")
@@ -391,12 +413,13 @@ def generate_notebook(state: MetaAgentState) -> dict:
         "# Build configuration\n",
         f"# Auto-calculated: ~{auto_examples} examples for {len(tool_schemas)} tools\n",
         "config = BuildConfig(\n",
-        "    num_examples=None,        # Auto-calculate based on tool count\n",
-        "    batch_size=10,            # Examples per API call\n",
-        "    base_model='qwen2.5-3b',  # Base model to fine-tune\n",
-        "    epochs=3,                 # Training epochs\n",
-        "    agent_name='my_agent',   # Name for your agent\n",
-        "    runtime='both',          # Generate Ollama + Python runtime\n",
+        "    num_examples=None,         # Auto-calculate based on tool count\n",
+        "    batch_size=10,             # Examples per API call\n",
+        "    base_model='qwen2.5-3b',   # Base model to fine-tune\n",
+        "    epochs=3,                  # Training epochs\n",
+        "    agent_name='my_agent',     # Name for your agent\n",
+        "    runtime='both',            # Generate Ollama + Python runtime\n",
+        "    use_llm_for_prompt=True,   # Use LLM for comprehensive system prompt\n",
         ")\n",
         "\n",
         "# Create builder\n",
@@ -411,7 +434,7 @@ def generate_notebook(state: MetaAgentState) -> dict:
         build_code.append("    api_servers=api_servers,  # API fallback services\n")
     
     build_code.extend([
-        "    api_key=os.environ['OPENAI_API_KEY'],\n",
+        "    api_key=os.environ.get('ANTHROPIC_API_KEY') or os.environ.get('OPENAI_API_KEY'),\n",
         "    config=config,\n",
         ")\n",
         "\n",

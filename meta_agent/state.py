@@ -11,12 +11,15 @@ from operator import add
 class MCPServerDiscovery(TypedDict):
     """Represents a discovered MCP server."""
     service: str                    # "google_calendar"
-    package: str                    # "@cocal/google-calendar-mcp"
+    package: str                    # "@cocal/google-calendar-mcp" or "ghcr.io/owner/image"
+    server_type: str                # "npm" | "docker" | "go" | "python" | "binary"
     auth_type: str                  # "oauth" | "token" | "api_key" | "none"
     env_vars: list[str]             # ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"] - ALL required env vars
     tools: list[dict]               # Extracted tool schemas
     setup_url: Optional[str]        # Link to setup guide
     confidence: float               # 0.0 - 1.0 how confident we are
+    docker_image: Optional[str]     # Docker image (for server_type="docker"|"go"|"python")
+    repo_url: Optional[str]         # Source repository URL
 
 
 class APIEndpoint(TypedDict):
