@@ -1,0 +1,272 @@
+{
+  "name": "Notion",
+  "service_id": "notion",
+  "description": "Official Notion MCP server for managing pages, databases (data sources), blocks, and content in Notion workspaces",
+  "source": "https://github.com/makenotion/notion-mcp-server",
+  "package": {
+    "type": "npm",
+    "name": "@notionhq/notion-mcp-server",
+    "command": "npx",
+    "args": ["-y", "@notionhq/notion-mcp-server"]
+  },
+  "auth": {
+    "type": "token",
+    "env_vars": ["NOTION_TOKEN"],
+    "setup_url": "https://www.notion.so/profile/integrations",
+    "setup_instructions": "Create an internal integration at https://www.notion.so/profile/integrations and connect it to your pages via the Access tab or page connections"
+  },
+  "toolsets": [
+    {
+      "id": "search",
+      "name": "Search & Discovery",
+      "enabled_by_default": true,
+      "keywords": ["search", "find", "discover"]
+    },
+    {
+      "id": "pages",
+      "name": "Page Management",
+      "enabled_by_default": true,
+      "keywords": ["page", "create", "retrieve", "update"]
+    },
+    {
+      "id": "data_sources",
+      "name": "Data Sources (Databases)",
+      "enabled_by_default": true,
+      "keywords": ["database", "data source", "query", "table"]
+    },
+    {
+      "id": "blocks",
+      "name": "Block Management",
+      "enabled_by_default": true,
+      "keywords": ["block", "content", "append"]
+    },
+    {
+      "id": "comments",
+      "name": "Comments",
+      "enabled_by_default": false,
+      "keywords": ["comment", "discussion", "feedback"]
+    }
+  ],
+  "tools": [
+    {
+      "name": "v1/search",
+      "description": "Search for pages or data sources (databases) by title",
+      "category": "search",
+      "keywords": ["search", "find", "page", "database"],
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "Text to search for in page/database titles",
+          "required": true
+        },
+        "filter": {
+          "type": "object",
+          "description": "Filter by object type",
+          "required": false,
+          "properties": {
+            "value": {
+              "type": "string",
+              "enum": ["page", "data_source"]
+            },
+            "property": {
+              "type": "string",
+              "enum": ["object"]
+            }
+          }
+        },
+        "sort": {
+          "type": "object",
+          "description": "Sort order",
+          "required": false
+        },
+        "page_size": {
+          "type": "number",
+          "description": "Number of results (max 100)",
+          "required": false
+        }
+      },
+      "required_params": ["query"]
+    },
+    {
+      "name": "v1/pages/retrieve",
+      "description": "Retrieve page details and properties by page ID",
+      "category": "pages",
+      "keywords": ["get", "retrieve", "page", "details"],
+      "parameters": {
+        "page_id": {
+          "type": "string",
+          "description": "Page ID to retrieve",
+          "required": true
+        }
+      },
+      "required_params": ["page_id"]
+    },
+    {
+      "name": "v1/pages/create",
+      "description": "Create a new page in Notion",
+      "category": "pages",
+      "keywords": ["create", "new", "page"],
+      "parameters": {
+        "parent": {
+          "type": "object",
+          "description": "Parent page or database (requires page_id or database_id)",
+          "required": true
+        },
+        "properties": {
+          "type": "object",
+          "description": "Page properties (title, etc.)",
+          "required": true
+        },
+        "children": {
+          "type": "array",
+          "description": "Initial blocks/content for the page",
+          "required": false
+        }
+      },
+      "required_params": ["parent", "properties"]
+    },
+    {
+      "name": "v1/pages/update",
+      "description": "Update page properties and settings",
+      "category": "pages",
+      "keywords": ["update", "edit", "modify", "page"],
+      "parameters": {
+        "page_id": {
+          "type": "string",
+          "description": "Page ID to update",
+          "required": true
+        },
+        "properties": {
+          "type": "object",
+          "description": "Updated properties",
+          "required": false
+        },
+        "archived": {
+          "type": "boolean",
+          "description": "Archive/unarchive the page",
+          "required": false
+        }
+      },
+      "required_params": ["page_id"]
+    },
+    {
+      "name": "query-data-source",
+      "description": "Query a data source (database) with filters and sorts",
+      "category": "data_sources",
+      "keywords": ["query", "database", "filter", "sort", "data source"],
+      "parameters": {
+        "data_source_id": {
+          "type": "string",
+          "description": "Data source (database) ID to query",
+          "required": true
+        },
+        "filter": {
+          "type": "object",
+          "description": "Filter conditions",
+          "required": false
+        },
+        "sorts": {
+          "type": "array",
+          "description": "Sort configuration",
+          "required": false
+        },
+        "page_size": {
+          "type": "number",
+          "description": "Number of results (max 100)",
+          "required": false
+        }
+      },
+      "required_params": ["data_source_id"]
+    },
+    {
+      "name": "retrieve-a-data-source",
+      "description": "Get metadata and schema for a data source (database)",
+      "category": "data_sources",
+      "keywords": ["retrieve", "get", "database", "schema", "data source"],
+      "parameters": {
+        "data_source_id": {
+          "type": "string",
+          "description": "Data source ID to retrieve",
+          "required": true
+        }
+      },
+      "required_params": ["data_source_id"]
+    },
+    {
+      "name": "create-a-data-source",
+      "description": "Create a new data source (database) in Notion",
+      "category": "data_sources",
+      "keywords": ["create", "new", "database", "data source"],
+      "parameters": {
+        "parent": {
+          "type": "object",
+          "description": "Parent page (requires page_id)",
+          "required": true
+        },
+        "title": {
+          "type": "array",
+          "description": "Title for the data source",
+          "required": true
+        },
+        "properties": {
+          "type": "object",
+          "description": "Schema/properties definition",
+          "required": true
+        }
+      },
+      "required_params": ["parent", "title", "properties"]
+    },
+    {
+      "name": "v1/blocks/retrieve",
+      "description": "Retrieve a block by ID",
+      "category": "blocks",
+      "keywords": ["get", "retrieve", "block", "content"],
+      "parameters": {
+        "block_id": {
+          "type": "string",
+          "description": "Block ID to retrieve",
+          "required": true
+        }
+      },
+      "required_params": ["block_id"]
+    },
+    {
+      "name": "v1/blocks/children/append",
+      "description": "Append blocks (content) to a page or block",
+      "category": "blocks",
+      "keywords": ["append", "add", "content", "block"],
+      "parameters": {
+        "block_id": {
+          "type": "string",
+          "description": "Parent block or page ID",
+          "required": true
+        },
+        "children": {
+          "type": "array",
+          "description": "Array of blocks to append",
+          "required": true
+        }
+      },
+      "required_params": ["block_id", "children"]
+    },
+    {
+      "name": "v1/comments/create",
+      "description": "Create a comment on a page or block",
+      "category": "comments",
+      "keywords": ["create", "comment", "discussion"],
+      "parameters": {
+        "parent": {
+          "type": "object",
+          "description": "Parent page or block (requires page_id or discussion_id)",
+          "required": true
+        },
+        "rich_text": {
+          "type": "array",
+          "description": "Comment text content",
+          "required": true
+        }
+      },
+      "required_params": ["parent", "rich_text"]
+    }
+  ]
+}
