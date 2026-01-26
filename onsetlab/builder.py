@@ -38,7 +38,7 @@ class BuildConfig:
     # Data generation settings (v3 batched generator)
     num_examples: int = None  # Auto-calculated from tool count if None
     batch_size: int = 10      # Examples per LLM call (10x fewer API calls)
-    use_llm_for_prompt: bool = False  # Use LLM for richer system prompt
+    use_llm_for_prompt: bool = True  # Use LLM for comprehensive system prompt (recommended)
     
     # Prompt settings
     # "names_only" = Just tool names (shortest, for 20+ tools)

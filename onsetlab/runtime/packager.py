@@ -98,6 +98,9 @@ class AgentPackager:
             self._write_setup_script(output_dir)
             self._write_gitignore(output_dir)
             
+            # Note: Docker MCP servers use inline 'docker run' commands in mcp_config.json
+            # No docker-compose.yml needed - agent.py handles Docker directly
+            
             # Runtime-specific files
             if self.config.runtime in (RuntimeType.OLLAMA, RuntimeType.BOTH):
                 self._write_ollama_files(output_dir)
@@ -202,9 +205,11 @@ class AgentPackager:
             server_dict = server.to_dict() if hasattr(server, 'to_dict') else server
             
             name = server_dict.get("name", "server")
+            server_type = server_dict.get("server_type", "npm")
             command = server_dict.get("command", "npx")
             args = server_dict.get("args", [])
             server_tools = server_dict.get("tools", [])
+            docker_image = server_dict.get("docker_image", "")
             
             # Handle both env_vars (list) and env_var (single)
             env_vars = server_dict.get("env_vars", [])
@@ -216,12 +221,27 @@ class AgentPackager:
             for ev in env_vars:
                 env_dict[ev] = f"${{{ev}}}"
             
-            config["mcpServers"][name] = {
+            server_config = {
                 "command": command,
                 "args": args,
                 "env": env_dict,
-                "tools": server_tools
+                "tools": server_tools,
+                "server_type": server_type,  # Include for runtime awareness
             }
+            
+            # Add Docker-specific config
+            if server_type in ("docker", "go", "python"):
+                server_config["docker_image"] = docker_image
+                # For Docker, run the container directly with the MCP server
+                server_config["command"] = "docker"
+                # Use 'docker run' with env vars passed through
+                docker_args = ["run", "-i", "--rm"]
+                for ev in env_vars:
+                    docker_args.extend(["-e", ev])
+                docker_args.append(docker_image)
+                server_config["args"] = docker_args
+            
+            config["mcpServers"][name] = server_config
             
             # Track MCP tools
             config["mcp_tools"].extend(server_tools)
@@ -786,6 +806,18 @@ def call_api_tool(name: str, params: Dict[str, Any]) -> Dict[str, Any]:
             f.write(code)
         print(f"   📄 api_tools.py ({len(self.api_servers)} services, {sum(len(s.tools) if hasattr(s, 'tools') else len(s.get('tools', [])) for s in self.api_servers)} tools)")
     
+    def _has_docker_servers(self) -> bool:
+        """Check if any MCP server requires Docker."""
+        for server in self.mcp_servers:
+            server_dict = server.to_dict() if hasattr(server, 'to_dict') else server
+            server_type = server_dict.get('server_type', 'npm')
+            if server_type in ('docker', 'go', 'python'):
+                return True
+        return False
+    
+    # Note: Docker MCP servers now use inline 'docker run' commands in mcp_config.json
+    # The agent.py handles Docker container lifecycle directly - no docker-compose needed.
+    
     def _write_readme(self, output_dir: str):
         """Write README with usage instructions."""
         runtime = self.config.runtime
@@ -812,6 +844,19 @@ nano .env  # or use your preferred editor
 ```
 
 ### Step 2: Run the Agent
+
+'''
+        
+        # Add Docker note if there are Docker-based MCP servers
+        if self._has_docker_servers():
+            readme += '''#### 🐳 Docker-Based MCP Servers
+
+This agent uses Docker for some MCP servers. The agent will automatically run 
+Docker containers when needed using `docker run` commands.
+
+**Prerequisites:**
+- Docker Desktop must be installed and running
+- The required Docker images will be pulled automatically on first use
 
 '''
         

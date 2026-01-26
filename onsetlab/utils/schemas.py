@@ -108,57 +108,97 @@ class MCPServerConfig:
     This information is used when packaging the agent runtime.
     
     Attributes:
-        package: NPM package name (e.g., "@modelcontextprotocol/server-github")
+        package: Package identifier (NPM package, Docker image, or Go module)
         name: Short name for the server (e.g., "github"). Auto-derived if not set.
+        server_type: How to run this server ("npm", "docker", "go", "python", "binary")
         auth_type: Authentication method ("oauth", "token", "api_key", "cookie", "none")
         env_vars: List of ALL required environment variable names (preferred)
         env_var: Single env var (deprecated, use env_vars for multiple)
         description: Human-readable description of the server
         setup_url: URL to setup/documentation guide
-        command: Command to run the server (default: "npx")
-        args: Arguments for the command (default: ["-y", package])
+        command: Command to run the server (auto-set based on server_type)
+        args: Arguments for the command
         tools: List of tool names this server provides
         example_value: Example credential value for .env.example
+        docker_image: Docker image name (for server_type="docker")
+        docker_port: Port to expose (for Docker servers that use HTTP transport)
+        repo_url: Source repository URL (for Go/Python builds)
+    
+    Server Types:
+        - npm: Use npx to run (default, most common)
+        - docker: Use Docker container (universal fallback)
+        - go: Go binary (uses Docker wrapper or go install)
+        - python: Python package (uses Docker wrapper or pip)
+        - binary: Pre-built binary from GitHub releases
     
     Example:
-        >>> # Slack needs TWO env vars!
+        >>> # NPM package (default, most common)
         >>> server = MCPServerConfig(
         ...     package="@modelcontextprotocol/server-slack",
         ...     name="slack",
-        ...     auth_type="token",
-        ...     env_vars=["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"],  # Multiple env vars
-        ...     description="Slack integration",
-        ...     tools=["send_message", "list_channels"],
+        ...     server_type="npm",  # Default
+        ...     env_vars=["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"],
         ... )
         >>> 
-        >>> # GitHub needs just one
+        >>> # Go binary with Docker wrapper
         >>> server = MCPServerConfig(
-        ...     package="@modelcontextprotocol/server-github",
+        ...     package="github.com/github/github-mcp-server",
         ...     name="github",
-        ...     auth_type="token",
+        ...     server_type="docker",
+        ...     docker_image="ghcr.io/github/github-mcp-server",
         ...     env_vars=["GITHUB_PERSONAL_ACCESS_TOKEN"],
-        ...     description="GitHub API integration",
         ... )
     """
     package: str
     name: Optional[str] = None  # Auto-derived from package if not set
+    server_type: str = "npm"  # "npm", "docker", "go", "python", "binary"
     auth_type: str = "none"  # "oauth", "token", "api_key", "cookie", "none"
     env_vars: Optional[list] = None  # List of ALL required env vars (preferred)
     env_var: Optional[str] = None  # Single env var (deprecated, for backwards compat)
     description: str = ""
     setup_url: Optional[str] = None
-    command: str = "npx"  # Command to run server
-    args: Optional[list] = None  # Default: ["-y", package]
+    command: Optional[str] = None  # Auto-set based on server_type if None
+    args: Optional[list] = None  # Default based on server_type
     tools: Optional[list] = None  # Tool names this server provides
     example_value: Optional[str] = None  # Example credential for .env
+    docker_image: Optional[str] = None  # Docker image (for server_type="docker")
+    docker_port: Optional[int] = None  # Port for Docker HTTP transport
+    repo_url: Optional[str] = None  # Source repo URL
     
     def __post_init__(self):
-        """Auto-derive name from package if not set."""
+        """Auto-derive name and set defaults based on server_type."""
+        # Auto-derive name from package
         if self.name is None:
-            # Extract name from package (e.g., "@org/server-github" -> "github")
-            self.name = self.package.split("/")[-1].replace("-mcp-server", "").replace("server-", "").replace("-mcp", "")
+            # Handle different package formats
+            pkg = self.package.split("/")[-1]
+            self.name = pkg.replace("-mcp-server", "").replace("server-", "").replace("-mcp", "").replace("mcp-", "")
+        
+        # Set command and args based on server_type
+        if self.command is None:
+            if self.server_type == "npm":
+                self.command = "npx"
+            elif self.server_type == "docker":
+                self.command = "docker"
+            elif self.server_type == "go":
+                self.command = "docker"  # Use Docker wrapper for Go
+            elif self.server_type == "python":
+                self.command = "docker"  # Use Docker wrapper for Python
+            elif self.server_type == "binary":
+                self.command = self.package  # Direct binary path
+            else:
+                self.command = "npx"  # Default to npm
+        
+        # Set default args based on server_type
         if self.args is None:
-            self.args = ["-y", self.package]
+            if self.server_type == "npm":
+                self.args = ["-y", self.package]
+            elif self.server_type == "docker" and self.docker_image:
+                self.args = ["run", "--rm", "-i", self.docker_image]
+            elif self.server_type in ("go", "python") and self.docker_image:
+                self.args = ["run", "--rm", "-i", self.docker_image]
+            else:
+                self.args = ["-y", self.package]  # Default npm-style
+        
         if self.tools is None:
             self.tools = []
         
@@ -167,6 +207,28 @@ class MCPServerConfig:
             self.env_vars = []
         if self.env_var and self.env_var not in self.env_vars:
             self.env_vars.insert(0, self.env_var)
+    
+    def is_docker_based(self) -> bool:
+        """Check if this server requires Docker to run."""
+        return self.server_type in ("docker", "go", "python")
+    
+    def get_docker_run_command(self) -> list:
+        """Get the full Docker run command with env vars."""
+        if not self.docker_image:
+            return []
+        
+        cmd = ["docker", "run", "--rm", "-i"]
+        
+        # Add environment variables
+        for env_var in self.get_all_env_vars():
+            cmd.extend(["-e", env_var])
+        
+        # Add port mapping if specified
+        if self.docker_port:
+            cmd.extend(["-p", f"{self.docker_port}:{self.docker_port}"])
+        
+        cmd.append(self.docker_image)
+        return cmd
     
     def get_all_env_vars(self) -> list:
         """Get all required environment variables."""
@@ -177,6 +239,7 @@ class MCPServerConfig:
         result = {
             "package": self.package,
             "name": self.name,
+            "server_type": self.server_type,
             "auth_type": self.auth_type,
             "command": self.command,
             "args": self.args,
@@ -194,6 +257,13 @@ class MCPServerConfig:
             result["setup_url"] = self.setup_url
         if self.example_value:
             result["example_value"] = self.example_value
+        # Docker-specific fields
+        if self.docker_image:
+            result["docker_image"] = self.docker_image
+        if self.docker_port:
+            result["docker_port"] = self.docker_port
+        if self.repo_url:
+            result["repo_url"] = self.repo_url
         return result
     
     def to_json(self) -> str:
@@ -202,7 +272,7 @@ class MCPServerConfig:
     
     def __repr__(self) -> str:
         env_count = len(self.get_all_env_vars())
-        return f"MCPServerConfig(package='{self.package}', auth='{self.auth_type}', env_vars={env_count})"
+        return f"MCPServerConfig(package='{self.package}', type='{self.server_type}', env_vars={env_count})"
 
 
 # ============================================================================

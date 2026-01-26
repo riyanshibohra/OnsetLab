@@ -156,46 +156,89 @@ class PromptGenerator:
             return self._generate_from_template(problem_statement, tools)
     
     def _generate_with_llm(self, problem_statement: str, tools: list[ToolSchema]) -> str:
-        """Generate system prompt using LLM."""
+        """Generate comprehensive system prompt using LLM for small models."""
         
-        # Build tool descriptions for the LLM
+        # Build detailed tool descriptions
         tool_info = []
         for tool in tools:
-            tool_info.append({
+            tool_dict = {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.parameters,
+                "parameters": {},
                 "required": tool.required_params
-            })
+            }
+            # Include parameter details with types and enums
+            for pname, pinfo in tool.parameters.items():
+                if isinstance(pinfo, dict):
+                    param_desc = {
+                        "type": pinfo.get("type", "string"),
+                        "description": pinfo.get("description", ""),
+                    }
+                    if "enum" in pinfo:
+                        param_desc["valid_values"] = pinfo["enum"]
+                    tool_dict["parameters"][pname] = param_desc
+                else:
+                    tool_dict["parameters"][pname] = {"type": "string", "description": str(pinfo)}
+            tool_info.append(tool_dict)
         
-        llm_system = """You are an expert at writing system prompts for AI assistants.
-            Your task is to create a clear, effective system prompt for a fine-tuned language model.
+        llm_system = """You are an expert at writing system prompts for SMALL language models (3B parameters).
 
-            The prompt should:
-            1. Clearly define the assistant's role and capabilities
-            2. List all available tools with their parameters
-            3. Specify the exact format for tool calls
-            4. Include helpful behavioral guidelines
-            5. Be concise but complete (target: 500-800 tokens)
+Small models need EXPLICIT, DETAILED instructions. The prompt must be comprehensive.
 
-            IMPORTANT: The tool call format must use XML tags:
-            <tool_call>
-            {"tool": "tool-name", "parameters": {"key": "value"}}
-            </tool_call>
-            """
+Your task is to create a production-ready system prompt that will be embedded in a fine-tuned model.
+The model will use tools via MCP (Model Context Protocol) to interact with external services."""
 
-        llm_user = f"""Create a system prompt for an AI assistant with these specifications:
+        llm_user = f"""Create a comprehensive system prompt for a 3B parameter LLM with these tools.
 
-        PROBLEM STATEMENT:
-        {problem_statement}
+PROBLEM STATEMENT:
+{problem_statement}
 
-        AVAILABLE TOOLS:
-        {json.dumps(tool_info, indent=2)}
+AVAILABLE TOOLS:
+{json.dumps(tool_info, indent=2)}
 
-        Generate a complete system prompt that will be used to fine-tune a small language model.
-        Output ONLY the system prompt, no explanations or markdown formatting."""
+The system prompt MUST include ALL of these sections:
 
-        return self._call_llm(llm_system, llm_user)
+1. **ROLE DEFINITION**
+   - Clear statement of what the assistant does
+   - Scope of capabilities (what it CAN and CANNOT do)
+
+2. **TOOL DOCUMENTATION**
+   - List each tool with description
+   - Mark required vs optional parameters
+   - Include valid values for enum parameters
+
+3. **TOOL CALL FORMAT**
+   - Exact JSON syntax inside <tool_call> tags
+   - Example: <tool_call>{{"tool": "name", "parameters": {{}}}}</tool_call>
+
+4. **USING TOOL RESULTS**
+   - How to extract and present data from tool responses
+   - Format responses nicely for the user (use markdown)
+   - Reference actual data, don't summarize generically
+
+5. **MULTI-STEP WORKFLOWS**
+   - Example: "To post to Slack, first call slack_list_channels to find the channel ID, then call slack_post_message"
+   - Show the discover → act → confirm pattern
+
+6. **ERROR HANDLING**
+   - "NEVER retry the same tool call with identical parameters"
+   - "If a tool fails, explain the error to the user"
+   - "Ask user for clarification if parameters are unclear"
+
+7. **DATA INTEGRITY**
+   - "Use ONLY actual data from tool results"
+   - "NEVER hallucinate or make up IDs, names, or values"
+   - "If you don't have data, call the appropriate discovery tool first"
+
+8. **RESPONSE STYLE**
+   - Keep Slack messages concise and professional
+   - Format issue details with markdown
+   - Be helpful but brief
+
+Output ONLY the system prompt text. No markdown code blocks, no explanations.
+Target length: 800-1200 tokens for comprehensive coverage."""
+
+        return self._call_llm(llm_system, llm_user, max_tokens=2000)
     
     def _generate_from_template(self, problem_statement: str, tools: list[ToolSchema]) -> str:
         """Generate system prompt from template (no LLM needed)."""

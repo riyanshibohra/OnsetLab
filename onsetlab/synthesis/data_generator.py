@@ -30,10 +30,10 @@ class BatchGenConfig:
     tools_per_batch: int = 5          # Tools included in each prompt
     
     # Distribution (must sum to 1.0)
-    # - More multi-tool examples for better chaining ability
-    # - More edge cases for robust refusal/casual handling
-    single_tool_ratio: float = 0.60   # 60% single-tool examples
-    multi_tool_ratio: float = 0.25    # 25% multi-tool (2-3 tools chained)
+    # Reality: Most tasks require multiple tool calls (discover → act pattern)
+    # Single-tool is rare in practice, multi-tool is the norm
+    single_tool_ratio: float = 0.25   # 25% single-tool (simple lookups)
+    multi_tool_ratio: float = 0.60    # 60% multi-tool (discover → act chains)
     edge_case_ratio: float = 0.15     # 15% edge cases (refusals, casual, ambiguous)
     
     # Split ratios - more training data, less test (test is optional)
@@ -373,10 +373,20 @@ Tool details:
 CRITICAL RULES:
 1. Tool name MUST be EXACTLY one from the list above - copy it character-by-character!
 2. Use REAL values, NOT placeholders like {{{{date}}}}, <NAME>, [USER], etc.
-3. Good parameter values: "2026-01-20", "john@example.com", "Project Meeting", 42, true
-4. Bad parameter values: "{{{{date}}}}", "<email>", "[title]", "YOUR_VALUE_HERE"
-5. Generate diverse, realistic examples that match what real users would ask
+3. For parameters with VALID VALUES/enum listed above, use EXACTLY those values (case-sensitive!)
+4. For ID parameters: derive from user query context (use names/references the user mentions)
+5. For text/content parameters: create realistic content matching the query
 6. Include short direct queries AND longer natural language requests
+
+Good parameter values:
+- IDs derived from context: "marketing-team", "project-alpha", "john-doe"
+- Dates: "2026-01-20", "2026-02-15"
+- Numbers: 42, 100, 5
+- Text matching query: descriptive, specific
+
+Bad parameter values:
+- Random-looking IDs: "X7K2M9P4", "abc123xyz"
+- Generic placeholders: "value123", "item1"
 
 Output format (JSON array):
 [
@@ -384,7 +394,7 @@ Output format (JSON array):
   ...
 ]
 
-Generate {self.config.batch_size} diverse examples. Use realistic values for ALL parameters:"""
+Generate {self.config.batch_size} diverse examples:"""
 
         return self._call_llm(prompt)
     
@@ -410,7 +420,7 @@ Generate {self.config.batch_size} diverse examples. Use realistic values for ALL
         # Build dynamic example using actual tools
         example_tools = tool_names[:2] if len(tool_names) >= 2 else tool_names
         
-        prompt = f"""Generate {min(5, self.config.batch_size)} multi-step examples requiring MULTIPLE tools.
+        prompt = f"""Generate {min(5, self.config.batch_size)} multi-step examples requiring 2-4 tool calls each.
 
 Context: {self.problem_statement}
 
@@ -420,23 +430,35 @@ EXACT TOOL NAMES (copy these exactly):
 Tool details:
 {tools_desc}
 
-CRITICAL RULES:
-1. Tool names MUST be EXACTLY from the list above - copy character-by-character!
-2. Use REAL values: "2026-01-20", "john@company.com", "Team Standup", 42
-3. NO placeholders like {{{{date}}}}, <name>, [value], YOUR_VALUE_HERE
+CRITICAL PATTERN - DISCOVER THEN ACT:
+Most real tasks require multiple steps:
+1. DISCOVER: First call a list/search/get tool to find available resources or IDs
+2. ACT: Then use the discovered info in a follow-up action tool
+3. CONFIRM/NOTIFY: Optionally notify or confirm the action
+
+Example flow patterns:
+- "Post to the announcements channel" → list_channels → post_message
+- "Close all bug issues" → list_issues (filter bugs) → update_issue (close each)
+- "Send meeting invite to team" → list_users → create_event → send_notification
+
+RULES:
+1. Tool names MUST be EXACTLY from the list above
+2. For enum/state parameters: use the EXACT case from the schema
+3. Each example should have 2-4 tool calls that logically chain
+4. The user query should be natural - they don't specify tool names
 
 Output format:
 [
   {{
-    "query": "user request requiring multiple steps",
+    "query": "natural user request that requires multiple steps",
     "tool_calls": [
-      {{"tool": "{example_tools[0]}", "parameters": {{}}}},
-      {{"tool": "{example_tools[-1]}", "parameters": {{}}}}
+      {{"tool": "discovery_tool", "parameters": {{...}}}},
+      {{"tool": "action_tool", "parameters": {{...}}}}
     ]
   }}
 ]
 
-Generate {min(5, self.config.batch_size)} multi-step examples with realistic parameter values:"""
+Generate {min(5, self.config.batch_size)} diverse multi-step examples:"""
 
         return self._call_llm(prompt)
     
@@ -697,15 +719,64 @@ Generate {count} missing-info examples:"""
         return None
     
     def _format_tools(self, tools: list) -> str:
-        """Format tools list for prompt."""
+        """
+        Format tools list for prompt, extracting enum constraints.
+        
+        This ensures the LLM knows valid enum values (e.g., "OPEN", "CLOSED")
+        and uses them correctly in generated examples.
+        """
         lines = []
         for t in tools:
-            params = t.parameters if hasattr(t, 'parameters') else {}
-            required = t.required_params if hasattr(t, 'required_params') else []
-            lines.append(f"• {t.name}: {t.description}")
-            lines.append(f"  Parameters: {json.dumps(params)}")
+            name = t.name if hasattr(t, 'name') else t.get('name', '')
+            desc = t.description if hasattr(t, 'description') else t.get('description', '')
+            params = t.parameters if hasattr(t, 'parameters') else t.get('parameters', {})
+            required = t.required_params if hasattr(t, 'required_params') else t.get('required_params', [])
+            
+            lines.append(f"• {name}: {desc}")
+            
+            # Format parameters with enum values highlighted
+            param_lines = []
+            enum_notes = []
+            
+            for pname, pinfo in params.items():
+                if isinstance(pinfo, dict):
+                    ptype = pinfo.get('type', 'string')
+                    pdesc = pinfo.get('description', '')
+                    
+                    # Check for direct enum
+                    if 'enum' in pinfo:
+                        enum_values = pinfo['enum']
+                        param_lines.append(f"    - {pname} ({ptype}): {pdesc}")
+                        enum_notes.append(f"    ⚠️ {pname} must be one of: {enum_values}")
+                    
+                    # Check for enum in array items
+                    elif ptype == 'array' and 'items' in pinfo:
+                        items = pinfo['items']
+                        if isinstance(items, dict) and 'enum' in items:
+                            enum_values = items['enum']
+                            param_lines.append(f"    - {pname} (array): {pdesc}")
+                            enum_notes.append(f"    ⚠️ {pname} items must be one of: {enum_values}")
+                        else:
+                            param_lines.append(f"    - {pname} ({ptype}): {pdesc}")
+                    else:
+                        param_lines.append(f"    - {pname} ({ptype}): {pdesc}")
+                else:
+                    param_lines.append(f"    - {pname}: {pinfo}")
+            
+            if param_lines:
+                lines.append("  Parameters:")
+                lines.extend(param_lines)
+            
+            # Add enum constraints clearly
+            if enum_notes:
+                lines.append("  VALID VALUES (use exactly as shown):")
+                lines.extend(enum_notes)
+            
             if required:
                 lines.append(f"  Required: {required}")
+            
+            lines.append("")  # Empty line between tools
+        
         return "\n".join(lines)
     
     def _split_data(self, examples: list) -> dict:
@@ -767,132 +838,372 @@ Generate {count} missing-info examples:"""
             "test": test
         }
     
+    def _get_tool_by_name(self, tool_name: str):
+        """Find tool schema by name."""
+        for tool in self.tools:
+            name = tool.name if hasattr(tool, 'name') else tool.get('name', '')
+            if name == tool_name:
+                return tool
+        return None
+    
     def _simulate_tool_result(self, tool_name: str, parameters: dict) -> str:
         """
-        Generate a realistic simulated tool result for training.
+        Generate realistic tool results using PATTERN INFERENCE (no LLM calls!).
         
-        This teaches the model what tool results look like so it can
-        continue appropriately after receiving them at runtime.
+        Instead of hardcoding specific tool names, we infer the response type
+        from the tool's naming pattern and description:
+        - list_*, search_*, get_*s (plural) → return array of items
+        - get_*, fetch_* (singular) → return single object
+        - create_*, add_*, new_* → return created object with ID/URL
+        - update_*, modify_*, edit_* → return updated object
+        - delete_*, remove_* → return success confirmation
+        - send_*, post_*, notify_* → return delivery confirmation
+        
+        This is:
+        - Fast (no API calls)
+        - Generic (works with any tool following common naming conventions)
+        - Not hardcoded to specific tool names
         """
-        # Common patterns based on tool name keywords
-        tool_lower = tool_name.lower()
+        tool = self._get_tool_by_name(tool_name)
+        tool_desc = ""
+        if tool:
+            tool_desc = (tool.description if hasattr(tool, 'description') 
+                        else tool.get('description', '')).lower()
         
-        if "list_issues" in tool_lower or "get_issue" in tool_lower:
-            repo = parameters.get("repo", "my-repo")
+        name_lower = tool_name.lower()
+        name_parts = set(name_lower.split('_'))  # Split tool name into parts
+        
+        # Generate realistic IDs and timestamps
+        item_id = random.randint(100, 9999)
+        timestamp = "2026-01-25T10:30:00Z"
+        
+        # Helper to check if ANY part of tool name matches action keywords
+        def has_action(*keywords):
+            return bool(name_parts & set(keywords))
+        
+        # PATTERN 1: List/Search operations → return array
+        if (has_action('list', 'search', 'find', 'query') or
+            'list' in tool_desc or 'search' in tool_desc or
+            name_lower.endswith('s') and name_lower.startswith('get_')):
+            
+            # Infer item type from tool name
+            # e.g., "list_issues" → "issue", "search_users" → "user"
+            item_type = name_lower.replace('list_', '').replace('search_', '').replace('find_', '').replace('get_', '').rstrip('s')
+            
+            # Build item - state only if provided in params or available in schema
+            def get_state_value():
+                # Priority 1: Use state from params if provided
+                if parameters.get('state'):
+                    return str(parameters.get('state')).upper()
+                
+                # Priority 2: Get from tool schema enum if available
+                if tool:
+                    tool_params = tool.parameters if hasattr(tool, 'parameters') else tool.get('parameters', {})
+                    state_param = tool_params.get('state', {})
+                    if isinstance(state_param, dict) and 'enum' in state_param:
+                        return random.choice(state_param['enum'])
+                
+                # Priority 3: No state field - return None
+                return None
+            
+            item_state = get_state_value()
+            
+            items = []
+            for i in range(random.randint(2, 4)):
+                item = {
+                    "id": f"{item_type}_{item_id + i}",
+                    "name": f"Sample {item_type.title()} {i+1}",
+                    "title": f"Sample {item_type.title()} {i+1}",
+                    "created_at": timestamp
+                }
+                # Only add state if we have one
+                if item_state:
+                    item["state"] = item_state
+                items.append(item)
+            
             return json.dumps({
-                "issues": [
-                    {"number": 42, "title": "Bug in authentication flow", "state": "open"},
-                    {"number": 38, "title": "Performance issue on dashboard", "state": "open"},
-                    {"number": 35, "title": "Update dependencies", "state": "closed"}
-                ],
-                "total_count": 3
+                "items": items,
+                f"{item_type}s": items,  # Also add pluralized key
+                "total_count": len(items)
             })
         
-        elif "create_issue" in tool_lower:
+        # PATTERN 2: Get single item → return object
+        elif has_action('get', 'fetch', 'read', 'retrieve') and not has_action('list', 'search'):
+            item_type = name_lower.replace('get_', '').replace('fetch_', '').replace('read_', '').replace('retrieve_', '')
+            
+            result = {
+                "id": f"{item_type}_{item_id}",
+                "name": parameters.get('name', f"Sample {item_type.title()}"),
+                "title": parameters.get('title', f"Sample {item_type.title()}"),
+                "description": f"Details for {item_type}",
+                "created_at": timestamp,
+                "url": f"https://example.com/{item_type}/{item_id}"
+            }
+            # Only add state if specified in params
+            if parameters.get('state'):
+                result["state"] = str(parameters.get('state')).upper()
+            return json.dumps(result)
+        
+        # PATTERN 3: Create operations → return created object with ID
+        elif has_action('create', 'add', 'new', 'insert'):
+            item_type = name_lower.replace('create_', '').replace('add_', '').replace('new_', '').replace('insert_', '')
+            
+            result = {
+                "id": item_id,
+                "number": item_id,
+                "title": parameters.get('title', f"New {item_type.title()}"),
+                "name": parameters.get('name', f"New {item_type.title()}"),
+                "created": True,
+                "url": f"https://example.com/{item_type}/{item_id}",
+                "created_at": timestamp
+            }
+            # Only add state if specified in params
+            if parameters.get('state'):
+                result["state"] = str(parameters.get('state')).upper()
+            return json.dumps(result)
+        
+        # PATTERN 4: Update operations → return updated object
+        elif has_action('update', 'modify', 'edit', 'patch'):
+            result = {
+                "id": parameters.get('id', item_id),
+                "updated": True,
+                "title": parameters.get('title', "Updated item"),
+                "modified_at": timestamp
+            }
+            # Only add state if specified in params
+            if parameters.get('state'):
+                result["state"] = str(parameters.get('state')).upper()
+            return json.dumps(result)
+        
+        # PATTERN 5: Delete operations → return success
+        elif has_action('delete', 'remove', 'destroy'):
             return json.dumps({
-                "number": random.randint(100, 999),
-                "title": parameters.get("title", "New issue"),
-                "url": f"https://github.com/{parameters.get('owner', 'org')}/{parameters.get('repo', 'repo')}/issues/{random.randint(100, 999)}",
-                "state": "open"
+                "deleted": True,
+                "id": parameters.get('id', item_id),
+                "message": "Successfully deleted"
             })
         
-        elif "search_repo" in tool_lower:
-            query = parameters.get("query", "search")
-            return json.dumps({
-                "items": [
-                    {"full_name": "facebook/react", "description": "A JavaScript library for building user interfaces", "stars": 220000},
-                    {"full_name": "vuejs/vue", "description": "Progressive JavaScript Framework", "stars": 205000}
-                ],
-                "total_count": 2
-            })
-        
-        elif "send_message" in tool_lower or "post_message" in tool_lower:
-            return json.dumps({
+        # PATTERN 6: Send/Post/Notify operations → return delivery confirmation
+        elif has_action('send', 'post', 'notify', 'publish', 'message', 'reply'):
+            # Extract channel/recipient from actual parameters passed
+            target = None
+            for param_name in parameters:
+                if 'channel' in param_name.lower() or 'to' in param_name.lower() or 'recipient' in param_name.lower():
+                    target = parameters[param_name]
+                    break
+            
+            result = {
                 "ok": True,
-                "message_id": f"msg_{random.randint(1000, 9999)}",
-                "channel": parameters.get("channel", "#general"),
-                "timestamp": "2026-01-23T10:30:00Z"
-            })
+                "sent": True,
+                "message_id": f"msg_{item_id}",
+                "timestamp": timestamp
+            }
+            if target:
+                result["channel"] = target
+            return json.dumps(result)
         
-        elif "list_channel" in tool_lower:
-            return json.dumps({
-                "channels": [
-                    {"id": "C001", "name": "general"},
-                    {"id": "C002", "name": "dev-team"},
-                    {"id": "C003", "name": "alerts"}
-                ]
-            })
-        
-        elif "get_file" in tool_lower or "read_file" in tool_lower:
-            return json.dumps({
-                "content": "# README\n\nThis is the project documentation...",
-                "path": parameters.get("path", "README.md"),
-                "encoding": "utf-8"
-            })
-        
-        elif "search_user" in tool_lower:
-            return json.dumps({
-                "users": [
-                    {"login": "octocat", "name": "The Octocat", "type": "User"},
-                    {"login": "hubot", "name": "Hubot", "type": "Bot"}
-                ]
-            })
-        
-        elif "get_pull" in tool_lower or "list_pull" in tool_lower:
-            return json.dumps({
-                "pull_requests": [
-                    {"number": 101, "title": "Add new feature", "state": "open", "user": "developer1"},
-                    {"number": 99, "title": "Fix critical bug", "state": "merged", "user": "developer2"}
-                ]
-            })
-        
+        # DEFAULT: Generic success response
         else:
-            # Generic success response
             return json.dumps({
                 "success": True,
-                "message": f"Operation completed successfully",
-                "data": parameters
+                "ok": True,
+                "result": parameters,
+                "timestamp": timestamp
             })
+    
+    def _generate_result_response(self, tool_name: str, params: dict, result: str) -> str:
+        """
+        Generate helpful response using PATTERN INFERENCE (no LLM calls!).
+        
+        Analyzes the result structure to present data meaningfully.
+        """
+        try:
+            result_data = json.loads(result)
+        except:
+            return "I've completed that action for you."
+        
+        name_lower = tool_name.lower()
+        name_parts = set(name_lower.split('_'))
+        
+        # PATTERN 0: Message/Notification sent - check FIRST (before arrays!)
+        # If result has ok=true or sent=true, it's a send operation - just confirm success
+        if result_data.get('ok') or result_data.get('sent'):
+            return "✓ Sent successfully!"
+        
+        # PATTERN 1: List results - DYNAMICALLY find any array field in result
+        for key, value in result_data.items():
+            if isinstance(value, list) and len(value) > 0:
+                items = value
+                # Use the actual key name (e.g., "channels", "issues", "users")
+                key_label = key.replace('_', ' ')
+                
+                if not items:
+                    return f"No {key_label} found matching your criteria."
+                
+                lines = [f"I found {len(items)} {key_label}:"]
+                for i, item in enumerate(items[:5], 1):
+                    if isinstance(item, dict):
+                        # Dynamically find display fields
+                        name = item.get('name', item.get('title', item.get('id', f'Item {i}')))
+                        item_id = item.get('id', item.get('number', ''))
+                        state = item.get('state', item.get('status', ''))
+                        
+                        if item_id and state:
+                            lines.append(f"{i}. **{name}** (ID: {item_id}, {state})")
+                        elif item_id:
+                            lines.append(f"{i}. **{name}** (ID: {item_id})")
+                        else:
+                            lines.append(f"{i}. **{name}**")
+                    else:
+                        lines.append(f"{i}. {item}")
+                
+                if len(items) > 5:
+                    lines.append(f"...and {len(items) - 5} more.")
+                
+                return "\n".join(lines)
+        
+        # PATTERN 1.5: Single object details (for get_issue, get_user, etc.)
+        name_parts = set(name_lower.split('_'))
+        if name_parts & {'get', 'fetch', 'read', 'retrieve'} and not name_parts & {'list', 'search'}:
+            item_id = result_data.get('id', result_data.get('number', ''))
+            title = result_data.get('title', result_data.get('name', ''))
+            state = result_data.get('state', result_data.get('status', ''))
+            desc = result_data.get('description', result_data.get('body', ''))
+            url = result_data.get('url', '')
+            
+            lines = []
+            if title:
+                lines.append(f"**{title}**" + (f" (#{item_id})" if item_id else ""))
+            if state:
+                lines.append(f"- Status: {state}")
+            if desc:
+                lines.append(f"- {desc[:100]}..." if len(desc) > 100 else f"- {desc}")
+            if url:
+                lines.append(f"- URL: {url}")
+            
+            if lines:
+                return "Here are the details:\n\n" + "\n".join(lines)
+        
+        # PATTERN 2: Created object
+        if result_data.get('created') or result_data.get('number') and 'create' in name_lower:
+            item_id = result_data.get('id', result_data.get('number', ''))
+            title = result_data.get('title', result_data.get('name', 'item'))
+            url = result_data.get('url', '')
+            
+            response = f"Done! Created **{title}**"
+            if item_id:
+                response += f" (#{item_id})"
+            if url:
+                response += f"\n\nView it at: {url}"
+            return response
+        
+        # PATTERN 3: Updated object - include title if available
+        if result_data.get('updated') or 'update' in name_lower:
+            item_id = result_data.get('id', params.get('id', ''))
+            title = result_data.get('title', params.get('title', ''))
+            status = result_data.get('state', result_data.get('status', ''))
+            
+            parts = ["✓ Successfully updated"]
+            if title:
+                parts.append(f"**{title}**")
+            if item_id:
+                parts.append(f"(#{item_id})")
+            if status:
+                parts.append(f"- Status: {status}")
+            
+            return " ".join(parts)
+        
+        # PATTERN 5: Deleted
+        if result_data.get('deleted') or 'delete' in name_lower:
+            return "✓ Successfully deleted."
+        
+        # PATTERN 6: Generic success
+        if result_data.get('success'):
+            return f"✓ {tool_name.replace('_', ' ').title()} completed successfully."
+        
+        return "I've completed that action for you."
     
     def _generate_final_summary(self, query: str, tool_calls: list, results: list) -> str:
         """
-        Generate a natural final response summarizing what was done.
-        """
-        # Build a simple summary based on tools used
-        tool_names = [tc.get("tool", "") for tc in tool_calls]
+        Generate multi-tool summary using PATTERN INFERENCE (no LLM calls!).
         
+        Combines individual result presentations into a coherent summary.
+        """
         summaries = []
-        for i, (tool, result) in enumerate(zip(tool_names, results)):
-            tool_lower = tool.lower()
+        details = []
+        
+        for tc, result in zip(tool_calls, results):
+            tool_name = tc.get("tool", "")
+            params = tc.get("parameters", {})
+            name_lower = tool_name.lower()
+            
             try:
                 result_data = json.loads(result)
             except:
-                result_data = {}
+                summaries.append(f"completed {tool_name.replace('_', ' ')}")
+                continue
             
-            if "list_issues" in tool_lower:
-                count = result_data.get("total_count", len(result_data.get("issues", [])))
-                summaries.append(f"found {count} issues")
-            elif "create_issue" in tool_lower:
-                num = result_data.get("number", "")
-                summaries.append(f"created issue #{num}")
-            elif "search_repo" in tool_lower:
-                count = result_data.get("total_count", len(result_data.get("items", [])))
-                summaries.append(f"found {count} repositories")
-            elif "send_message" in tool_lower:
-                channel = result_data.get("channel", "the channel")
-                summaries.append(f"posted the update to {channel}")
-            elif "list_channel" in tool_lower:
-                count = len(result_data.get("channels", []))
-                summaries.append(f"found {count} channels")
+            # Extract meaningful info - DYNAMICALLY find any array in result
+            found_array = False
+            for key, value in result_data.items():
+                if isinstance(value, list) and len(value) > 0:
+                    items = value
+                    count = len(items)
+                    key_label = key.replace('_', ' ')
+                    summaries.append(f"found {count} {key_label}")
+                    
+                    # Add detail about items
+                    if items:
+                        names = []
+                        for item in items[:3]:
+                            if isinstance(item, dict):
+                                n = item.get('name', item.get('title', item.get('id', '?')))
+                                names.append(str(n))
+                        if names:
+                            details.append(f"{key_label.title()}: {', '.join(names)}")
+                    found_array = True
+                    break
+            
+            if found_array:
+                continue
+            
+            # Created object
+            if result_data.get('created') or result_data.get('number') or 'create' in name_lower:
+                item_id = result_data.get('id', result_data.get('number', ''))
+                title = result_data.get('title', result_data.get('name', 'item'))
+                summaries.append(f"created #{item_id}" if item_id else f"created {title}")
+                if title:
+                    details.append(f"Created: #{item_id} - {title}" if item_id else f"Created: {title}")
+            
+            # Message sent
+            elif result_data.get('ok') or result_data.get('sent') or 'send' in name_lower or 'post' in name_lower:
+                channel = result_data.get('channel', params.get('channel', ''))
+                summaries.append(f"sent message to {channel}" if channel else "sent message")
+            
+            # Updated
+            elif result_data.get('updated') or 'update' in name_lower:
+                item_id = result_data.get('id', params.get('id', ''))
+                summaries.append(f"updated #{item_id}" if item_id else "updated")
+            
+            # Deleted
+            elif result_data.get('deleted') or 'delete' in name_lower:
+                summaries.append("deleted")
+            
+            # Generic
             else:
-                summaries.append(f"completed {tool}")
+                summaries.append(f"completed {tool_name.replace('_', ' ')}")
         
+        # Build final response
         if len(summaries) == 1:
-            return f"Done! I {summaries[0]}."
+            base = f"Done! I {summaries[0]}."
         elif len(summaries) == 2:
-            return f"Done! I {summaries[0]} and {summaries[1]}."
+            base = f"Done! I {summaries[0]} and {summaries[1]}."
         else:
-            return f"Done! I {', '.join(summaries[:-1])}, and {summaries[-1]}."
+            base = f"Done! I {', '.join(summaries[:-1])}, and {summaries[-1]}."
+        
+        if details:
+            return base + "\n\n" + "\n".join(details)
+        return base
     
     def _to_chat_format(self, example: dict) -> dict:
         """
@@ -972,14 +1283,31 @@ Generate {count} missing-info examples:"""
             })
         
         elif "tool" in example:
-            # Single tool call (unchanged)
+            # Single tool call - NOW INCLUDES RESULT + FINAL RESPONSE!
+            tool_name = example.get("tool")
+            params = example.get("parameters", {})
+            
             tool_json = json.dumps({
-                "tool": example.get("tool"),
-                "parameters": example.get("parameters", {})
+                "tool": tool_name,
+                "parameters": params
             })
             messages.append({
                 "role": "assistant",
                 "content": f"<tool_call>\n{tool_json}\n</tool_call>"
+            })
+            
+            # Add simulated tool result
+            result = self._simulate_tool_result(tool_name, params)
+            messages.append({
+                "role": "tool",
+                "content": result
+            })
+            
+            # Add final response that USES the result data
+            final_response = self._generate_result_response(tool_name, params, result)
+            messages.append({
+                "role": "assistant",
+                "content": final_response
             })
         
         else:

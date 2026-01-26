@@ -349,7 +349,7 @@ def generate_response(model, messages: list) -> str:
     
     prompt += "<|im_start|>assistant\n"
     
-    output = model(prompt, max_tokens=512, temperature=0.3, stop=["<|im_end|>", "</tool_call>"])
+    output = model(prompt, max_tokens=2048, temperature=0.3, stop=["<|im_end|>", "</tool_call>"])
     response = output["choices"][0]["text"]
     
     if "<tool_call>" in response and "</tool_call>" not in response:
@@ -378,8 +378,9 @@ def parse_tool_call(response: str) -> dict:
     if brace_start >= 0 and brace_end > brace_start:
         try:
             return json.loads(json_str[brace_start:brace_end])
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            print(f"   ⚠️  Failed to parse tool call JSON: {e}")
+            print(f"   JSON was: {json_str[brace_start:brace_end][:200]}...")
     return None
 
 
@@ -388,14 +389,18 @@ def parse_tool_call(response: str) -> dict:
 # ============================================================
 
 async def run_agent(tools: ToolManager, model, query: str) -> str:
-    """Run the agentic loop with MCP + API tool execution."""
+    """Run the agentic loop with MCP + API tool execution and loop detection."""
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": query},
     ]
     
-    max_iterations = 5
-    for _ in range(max_iterations):
+    # Loop detection: track last tool call
+    last_tool_call = None
+    repeat_count = 0
+    
+    max_iterations = 10  # Increased for multi-step workflows
+    for iteration in range(max_iterations):
         response = generate_response(model, messages)
         tool_call = parse_tool_call(response)
         
@@ -403,16 +408,36 @@ async def run_agent(tools: ToolManager, model, query: str) -> str:
             tool_name = tool_call.get("tool")
             params = tool_call.get("parameters", {})
             
-            print(f"\n🔧 Calling {tool_name}...")
+            # Loop detection: check if same tool called with same params
+            current_call = (tool_name, json.dumps(params, sort_keys=True))
+            if current_call == last_tool_call:
+                repeat_count += 1
+                if repeat_count >= 2:
+                    # Force model to use previous results
+                    messages.append({"role": "assistant", "content": response})
+                    messages.append({
+                        "role": "tool", 
+                        "content": "ERROR: You already called this tool with the same parameters. "
+                                   "Use the previous results from the conversation above. "
+                                   "Do NOT call this tool again - provide a final answer to the user."
+                    })
+                    print(f"   ⚠️  Loop detected: {tool_name} called {repeat_count} times with same params")
+                    continue
+            else:
+                repeat_count = 0
+            last_tool_call = current_call
+            
+            print(f"\n🔧 [{iteration + 1}/{max_iterations}] Calling {tool_name}...")
             result = await tools.call_tool(tool_name, params)
-            print(f"📋 Result: {result[:200]}...")
+            result_preview = result[:300] if len(result) > 300 else result
+            print(f"📋 Result: {result_preview}...")
             
             messages.append({"role": "assistant", "content": response})
             messages.append({"role": "tool", "content": result})
         else:
             return response
     
-    return "Max iterations reached."
+    return "Max iterations reached. The agent made too many tool calls without providing a final answer."
 
 
 async def interactive_mode(tools: ToolManager, model):
