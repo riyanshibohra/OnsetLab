@@ -9,6 +9,9 @@ from .prompt_generator import (
     PromptConfig,
     generate_system_prompt,
     generate_minimal_prompt,
+    # Single-Tool Architecture (v2.0)
+    generate_single_tool_prompt,
+    get_clarification_examples,
 )
 from .data_generator import (
     BatchedDataGenerator,
@@ -23,6 +26,9 @@ __all__ = [
     "PromptConfig",
     "generate_system_prompt",
     "generate_minimal_prompt",
+    # Single-Tool Architecture (v2.0)
+    "generate_single_tool_prompt",
+    "get_clarification_examples",
     # Data generation
     "BatchedDataGenerator",
     "BatchGenConfig",

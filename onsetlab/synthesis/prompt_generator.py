@@ -156,7 +156,14 @@ class PromptGenerator:
             return self._generate_from_template(problem_statement, tools)
     
     def _generate_with_llm(self, problem_statement: str, tools: list[ToolSchema]) -> str:
-        """Generate comprehensive system prompt using LLM for small models."""
+        """
+        Generate comprehensive system prompt using LLM for small models.
+        
+        Updated to follow Single-Tool Architecture:
+        - One tool call per message
+        - Clarify when info is missing
+        - No multi-step chaining
+        """
         
         # Build detailed tool descriptions
         tool_info = []
@@ -185,8 +192,10 @@ class PromptGenerator:
 
 Small models need EXPLICIT, DETAILED instructions. The prompt must be comprehensive.
 
-Your task is to create a production-ready system prompt that will be embedded in a fine-tuned model.
-The model will use tools via MCP (Model Context Protocol) to interact with external services."""
+Your task is to create a production-ready system prompt following the SINGLE-TOOL ARCHITECTURE:
+- The model calls ONE tool per user message (never chains multiple tools)
+- If required info is missing, it asks for clarification instead of guessing
+- Multi-step tasks become multi-turn conversations"""
 
         llm_user = f"""Create a comprehensive system prompt for a 3B parameter LLM with these tools.
 
@@ -196,49 +205,52 @@ PROBLEM STATEMENT:
 AVAILABLE TOOLS:
 {json.dumps(tool_info, indent=2)}
 
-The system prompt MUST include ALL of these sections:
+ARCHITECTURE RULES (CRITICAL):
+- ONE tool call per user message maximum
+- If required parameters are missing, ASK the user (don't guess)
+- Never chain tools (e.g., don't call list then create in one turn)
+- Guide users to provide complete information
+
+The system prompt MUST include these sections:
 
 1. **ROLE DEFINITION**
-   - Clear statement of what the assistant does
-   - Scope of capabilities (what it CAN and CANNOT do)
+   - What the assistant does
+   - What it CAN and CANNOT do
 
 2. **TOOL DOCUMENTATION**
-   - List each tool with description
-   - Mark required vs optional parameters
-   - Include valid values for enum parameters
+   - Each tool with description
+   - Required vs optional parameters (clearly marked)
+   - Valid values for enum parameters
 
 3. **TOOL CALL FORMAT**
-   - Exact JSON syntax inside <tool_call> tags
-   - Example: <tool_call>{{"tool": "name", "parameters": {{}}}}</tool_call>
+   - Exact JSON syntax: <tool_call>{{"tool": "name", "parameters": {{}}}}</tool_call>
 
-4. **USING TOOL RESULTS**
-   - How to extract and present data from tool responses
-   - Format responses nicely for the user (use markdown)
-   - Reference actual data, don't summarize generically
+4. **THREE RESPONSE TYPES**
+   - EXECUTE: When all required params are available → call the tool
+   - CLARIFY: When required params are missing → ask for them
+   - RESPOND: When no tool needed → reply naturally (greetings, thanks, out-of-scope)
 
-5. **MULTI-STEP WORKFLOWS**
-   - Example: "To post to Slack, first call slack_list_channels to find the channel ID, then call slack_post_message"
-   - Show the discover → act → confirm pattern
+5. **CLARIFICATION PATTERN**
+   - Acknowledge what the user wants
+   - List specifically what's needed
+   - Give an example format
+   - Example: "I can create an issue! Please provide:\\n- **Repository** (e.g., 'owner/repo')\\n- **Title**"
 
-6. **ERROR HANDLING**
-   - "NEVER retry the same tool call with identical parameters"
-   - "If a tool fails, explain the error to the user"
-   - "Ask user for clarification if parameters are unclear"
+6. **AFTER TOOL RESULTS**
+   - Present data clearly with markdown
+   - Use actual values from the result
+   - Offer next steps if relevant
 
-7. **DATA INTEGRITY**
-   - "Use ONLY actual data from tool results"
-   - "NEVER hallucinate or make up IDs, names, or values"
-   - "If you don't have data, call the appropriate discovery tool first"
-
-8. **RESPONSE STYLE**
-   - Keep Slack messages concise and professional
-   - Format issue details with markdown
-   - Be helpful but brief
+7. **IMPORTANT RULES**
+   - "Call ONE tool per message (never chain)"
+   - "NEVER guess parameter values - ask if unsure"
+   - "Use ONLY the exact tool names listed"
+   - "NEVER make up IDs, names, or values"
 
 Output ONLY the system prompt text. No markdown code blocks, no explanations.
-Target length: 800-1200 tokens for comprehensive coverage."""
+Target length: 600-900 tokens (focused and clear)."""
 
-        return self._call_llm(llm_system, llm_user, max_tokens=2000)
+        return self._call_llm(llm_system, llm_user, max_tokens=1500)
     
     def _generate_from_template(self, problem_statement: str, tools: list[ToolSchema]) -> str:
         """Generate system prompt from template (no LLM needed)."""
@@ -355,6 +367,8 @@ def generate_minimal_prompt(
     """
     Generate a system prompt (no LLM, no API key needed).
     
+    DEPRECATED: Use generate_single_tool_prompt() instead.
+    
     Optimized for SLM fine-tuning where the model learns from examples.
     
     Args:
@@ -413,3 +427,157 @@ Rules:
 - Be helpful and concise"""
     
     return prompt
+
+
+# ============================================================================
+# Single-Tool Architecture (v2.0)
+# ============================================================================
+
+def generate_single_tool_prompt(
+    problem_statement: str,
+    tools: list[ToolSchema],
+) -> str:
+    """
+    Generate a system prompt optimized for single-tool architecture.
+    
+    This follows the Single-Tool Architecture spec:
+    - One tool call per user message
+    - Clarify when required parameters are missing
+    - Never chain multiple tools
+    
+    Args:
+        problem_statement: Description of what the agent should do
+        tools: List of available tools
+        
+    Returns:
+        System prompt string optimized for 3B models
+    """
+    # Build detailed tool documentation
+    tool_docs = []
+    for tool in tools:
+        # Get required and optional params
+        required = tool.required_params or []
+        all_params = tool.parameters or {}
+        
+        # Build parameter list
+        param_lines = []
+        for pname, pinfo in all_params.items():
+            if isinstance(pinfo, dict):
+                ptype = pinfo.get("type", "string")
+                pdesc = pinfo.get("description", "")
+                # Check for enum values
+                if "enum" in pinfo:
+                    enum_vals = ", ".join(pinfo["enum"])
+                    param_lines.append(f"  - {pname} ({ptype}): {pdesc} [Valid: {enum_vals}]")
+                else:
+                    param_lines.append(f"  - {pname} ({ptype}): {pdesc}")
+            else:
+                param_lines.append(f"  - {pname}: {pinfo}")
+        
+        # Mark required params
+        required_str = ", ".join(required) if required else "none"
+        
+        tool_doc = f"""**{tool.name}**
+  {tool.description}
+  Required: {required_str}
+  Parameters:
+{chr(10).join(param_lines) if param_lines else "  (none)"}"""
+        
+        tool_docs.append(tool_doc)
+    
+    tools_section = "\n\n".join(tool_docs)
+    
+    # Build the prompt following Single-Tool Architecture
+    prompt = f"""You are an assistant that helps users with: {problem_statement}
+
+## Available Tools
+
+{tools_section}
+
+## How to Respond
+
+For each user message, do exactly ONE of the following:
+
+### 1. EXECUTE (if you have all required parameters)
+Call the tool with this exact format:
+<tool_call>
+{{"tool": "tool-name", "parameters": {{"param": "value"}}}}
+</tool_call>
+
+### 2. CLARIFY (if required parameters are missing)
+Ask the user for the missing information:
+- Acknowledge what they want to do
+- List specifically what you need
+- Give an example if helpful
+
+Example clarification:
+"I can create an issue for you! Please provide:
+- **Repository** (e.g., 'owner/repo-name')
+- **Title** for the issue"
+
+### 3. RESPOND (if no tool is needed)
+Reply naturally for:
+- Greetings and thanks
+- Questions about your capabilities
+- Requests outside your scope
+
+## Important Rules
+
+1. **ONE action per message** - Never chain multiple tool calls
+2. **Never guess** - If you don't have required info, ask for it
+3. **Use exact tool names** - Only use tools listed above
+4. **No made-up data** - Never invent IDs, names, or values
+5. **Be helpful** - Guide users on how to provide the right info
+
+## After Tool Results
+
+When you receive tool results:
+- Present the data clearly using markdown
+- Reference actual values from the result
+- Offer to help with next steps if relevant"""
+
+    return prompt
+
+
+def get_clarification_examples(tools: list[ToolSchema]) -> list[dict]:
+    """
+    Generate clarification example patterns for each tool.
+    
+    Returns a list of example clarifications that can be used
+    in training data generation.
+    
+    Args:
+        tools: List of available tools
+        
+    Returns:
+        List of {"tool": str, "missing": list, "clarification": str} dicts
+    """
+    examples = []
+    
+    for tool in tools:
+        required = tool.required_params or []
+        
+        if not required:
+            # No required params = no clarification needed
+            continue
+        
+        # Build clarification message
+        param_bullets = []
+        for param in required:
+            # Get description from tool parameters
+            param_info = (tool.parameters or {}).get(param, {})
+            if isinstance(param_info, dict):
+                pdesc = param_info.get("description", param)
+            else:
+                pdesc = param
+            param_bullets.append(f"- **{param}**: {pdesc}")
+        
+        clarification = f"I can help with that! Please provide:\n" + "\n".join(param_bullets)
+        
+        examples.append({
+            "tool": tool.name,
+            "required_params": required,
+            "clarification_template": clarification
+        })
+    
+    return examples
