@@ -2,35 +2,14 @@
 Generate Notebook Node
 ======================
 Creates the final Colab notebook with all discovered information.
+
+Note: Service tokens (GitHub, Slack, etc.) are NOT entered in the notebook.
+User sets those up later in the downloaded agent's .env file.
+Notebook only requires LLM API key for training data generation.
 """
 
 import json
 from meta_agent.state import MetaAgentState
-
-
-# Note: Env var filtering is now done by LLM in generate_guides node.
-# The servers passed here should already have cleaned env_vars.
-# This is just a simple fallback if somehow unfiltered vars slip through.
-
-def filter_credential_env_vars(env_vars: list) -> list:
-    """
-    Simple fallback filter for env vars.
-    
-    Note: Main filtering is done by LLM in generate_guides node.
-    This just catches obvious transport/config vars if they slip through.
-    """
-    if not env_vars:
-        return []
-    
-    # Simple skip list for obvious non-credentials
-    SKIP = {"MCP_TRANSPORT", "STREAMABLE_HTTP_PORT", "PORT", "HOST", "DEBUG", "NODE_ENV"}
-    
-    filtered = [
-        ev for ev in env_vars
-        if ev.upper() not in SKIP and "_PORT" not in ev.upper()
-    ]
-    
-    return filtered if filtered else env_vars
 
 
 def create_notebook_cell(cell_type: str, source: list[str], execution_count: int = None) -> dict:
@@ -52,12 +31,15 @@ def generate_notebook(state: MetaAgentState) -> dict:
     
     Notebook includes:
     1. Title and description
-    2. Installation cell (pip install onsetlab)
-    3. Configuration cell (API keys, tokens)
+    2. Installation cell
+    3. LLM API key configuration (only!)
     4. Tool schemas cell
-    5. MCP/API server configs cell
-    6. Build cell (builder.build())
+    5. MCP server configs cell
+    6. Build cell
     7. Export/download cell
+    
+    Note: No service tokens needed in notebook - user sets those
+    in the downloaded agent's .env file.
     
     Args:
         state: Current MetaAgentState
@@ -67,12 +49,10 @@ def generate_notebook(state: MetaAgentState) -> dict:
     """
     problem_statement = state.get("problem_statement", "")
     
-    # Use FILTERED results (set by filter_tools node)
-    # Fall back to unfiltered if filtered not available
+    # Use FILTERED results
     mcp_servers = state.get("filtered_mcp_servers") or state.get("mcp_servers", [])
     api_servers = state.get("filtered_api_servers") or state.get("api_servers", [])
-    tool_schemas = state.get("filtered_tool_schemas") or state.get("tool_schemas", [])
-    token_guides = state.get("token_guides", [])
+    tool_schemas = state.get("filtered_tool_schemas") or state.get("filtered_tools") or state.get("tool_schemas", [])
     
     print("\n📓 Generating Colab notebook...")
     
@@ -90,9 +70,9 @@ def generate_notebook(state: MetaAgentState) -> dict:
         "\n",
         "## What this notebook does:\n",
         f"1. Configures **{len(mcp_servers)}** MCP servers\n",
-        f"2. Sets up **{len(api_servers)}** API integrations\n",
-        f"3. Registers **{len(tool_schemas)}** tools\n",
-        "4. Fine-tunes a small language model\n",
+        f"2. Registers **{len(tool_schemas)}** tools\n",
+        "3. Generates synthetic training data\n",
+        "4. Fine-tunes a small language model (~15 min)\n",
         "5. Packages your agent for local deployment\n",
         "\n",
         "---"
@@ -118,114 +98,58 @@ def generate_notebook(state: MetaAgentState) -> dict:
         "!pip install -q --no-deps xformers trl peft accelerate bitsandbytes\n",
         "\n",
         "# Install data generation dependencies\n",
-        "!pip install -q openai httpx\n",
+        "!pip install -q openai anthropic httpx\n",
         "\n",
         "print('✅ All dependencies installed!')"
     ]))
     
     # ==========================================================================
-    # Cell 3: Token Setup Guide
-    # ==========================================================================
-    if token_guides:
-        guide_lines = [
-            "## 2️⃣ Setup Authentication Tokens\n",
-            "\n",
-            "Before running the build, you need to obtain access tokens for each service.\n",
-            "\n",
-        ]
-        
-        for guide in token_guides:
-            guide_lines.append(f"### {guide['service'].replace('_', ' ').title()}\n")
-            guide_lines.append(f"**Auth Type:** {guide['auth_type']}\n")
-            
-            # Show ALL required env vars
-            env_vars = guide.get('env_vars', [guide.get('env_var')])
-            if len(env_vars) == 1:
-                guide_lines.append(f"**Environment Variable:** `{env_vars[0]}`\n")
-            else:
-                guide_lines.append(f"**Environment Variables ({len(env_vars)} required):**\n")
-                for ev in env_vars:
-                    guide_lines.append(f"- `{ev}`\n")
-            
-            guide_lines.append("\n**Steps:**\n")
-            for i, step in enumerate(guide['steps'], 1):
-                # Remove existing numbering if present
-                step_text = step.lstrip('0123456789. ')
-                guide_lines.append(f"{i}. {step_text}\n")
-            guide_lines.append("\n---\n\n")
-        
-        cells.append(create_notebook_cell("markdown", guide_lines))
-    
-    # ==========================================================================
-    # Cell 4: Configuration
+    # Cell 3: LLM API Key Configuration (ONLY)
     # ==========================================================================
     cells.append(create_notebook_cell("markdown", [
-        "## 3️⃣ Configure API Keys & Tokens\n",
+        "## 2️⃣ Enter Your LLM API Key\n",
         "\n",
-        "Enter your API keys and tokens below:"
+        "You need an API key to generate training data. Choose **one**:\n",
+        "\n",
+        "- **Anthropic (Recommended)**: https://console.anthropic.com/\n",
+        "- **OpenAI**: https://platform.openai.com/api-keys\n",
+        "\n",
+        "> **Note:** Service tokens (GitHub, Slack, etc.) are configured later\n",
+        "> when you run the agent locally. You don't need them here!"
     ]))
     
-    config_lines = [
+    cells.append(create_notebook_cell("code", [
         "import os\n",
         "\n",
-        "# LLM API Key for training data generation (choose ONE)\n",
-        "# Option 1: OpenAI (gpt-4o)\n",
-        "os.environ['OPENAI_API_KEY'] = ''  # @param {type:\"string\"}\n",
-        "# Option 2: Anthropic (claude-sonnet-4.5) - RECOMMENDED for better quality\n",
+        "# Enter ONE of these API keys for training data generation:\n",
+        "\n",
+        "# Option 1: Anthropic (claude-sonnet) - RECOMMENDED\n",
         "os.environ['ANTHROPIC_API_KEY'] = ''  # @param {type:\"string\"}\n",
         "\n",
-    ]
-    
-    # Add env vars for each MCP server
-    if mcp_servers:
-        config_lines.append("# --- MCP Server Tokens ---\n")
-        for server in mcp_servers:
-            service_name = server['service'].replace('_', ' ').title()
-            
-            # Handle both old (env_var) and new (env_vars) formats
-            env_vars = server.get("env_vars") or []
-            if not env_vars and server.get("env_var"):
-                env_vars = [server.get("env_var")]
-            if not env_vars:
-                env_vars = [f"{server['service'].upper()}_TOKEN"]
-            
-            # Filter out non-credential env vars (transport config, ports, etc.)
-            env_vars = filter_credential_env_vars(env_vars)
-            
-            if env_vars:
-                config_lines.append(f"# {service_name} - {len(env_vars)} credential(s) required\n")
-                for env_var in env_vars:
-                    config_lines.append(f"os.environ['{env_var}'] = ''  # @param {{type:\"string\"}}\n")
-                config_lines.append("\n")
-    
-    # Add env vars for each API server (if any)
-    if api_servers:
-        config_lines.append("# --- API Server Tokens ---\n")
-        for api in api_servers:
-            env_var = api.get("env_var") or f"{api['service'].upper()}_API_KEY"
-            service_name = api['service'].replace('_', ' ').title()
-            config_lines.append(f"# {service_name} API Key\n")
-            config_lines.append(f"os.environ['{env_var}'] = ''  # @param {{type:\"string\"}}\n")
-            config_lines.append("\n")
-    
-    config_lines.append("print('✅ Configuration set!')")
-    
-    cells.append(create_notebook_cell("code", config_lines))
-    
-    # ==========================================================================
-    # Cell 5: Tool Schemas
-    # ==========================================================================
-    cells.append(create_notebook_cell("markdown", [
-        "## 4️⃣ Tool Schemas\n",
+        "# Option 2: OpenAI (gpt-4o)\n",
+        "os.environ['OPENAI_API_KEY'] = ''  # @param {type:\"string\"}\n",
         "\n",
-        f"The following **{len(tool_schemas)}** tools were discovered:"
+        "# Verify\n",
+        "if os.environ.get('ANTHROPIC_API_KEY') or os.environ.get('OPENAI_API_KEY'):\n",
+        "    print('✅ API key configured!')\n",
+        "else:\n",
+        "    print('⚠️ Please enter an API key above')"
     ]))
     
-    # Format tool schemas as Python code
+    # ==========================================================================
+    # Cell 4: Tool Schemas (collapsible)
+    # ==========================================================================
+    cells.append(create_notebook_cell("markdown", [
+        f"## 3️⃣ Tool Schemas ({len(tool_schemas)} tools)\n",
+        "\n",
+        "The code cell below defines all tool schemas. **Click to expand if needed.**"
+    ]))
+    
+    # Format tool schemas as Python code - collapsible in Colab
     tools_code = [
+        f"#@title 📦 Tool Schemas ({len(tool_schemas)} tools) - Click to expand\n",
         "from onsetlab import ToolSchema\n",
         "\n",
-        "# Discovered tool schemas\n",
         "tools = [\n",
     ]
     
@@ -237,14 +161,27 @@ def generate_notebook(state: MetaAgentState) -> dict:
         desc = tool.get('description', '').replace('"', '\\"').replace('\n', ' ')[:100]
         tools_code.append(f"        description=\"{desc}\",\n")
         
-        # Parameters
-        params = tool.get('inputSchema', {}).get('properties', {})
-        if params:
-            tools_code.append(f"        parameters={json.dumps(params, indent=12)[:-1]}        }},\n")
+        # Parameters - clean up format for ToolSchema
+        # Remove 'required' from inside each param (it belongs in required_params)
+        # Also simplify to just type + description (remove enum, default, etc. for cleaner output)
+        raw_params = tool.get('parameters', tool.get('inputSchema', {}).get('properties', {}))
+        clean_params = {}
+        for param_name, param_def in raw_params.items():
+            # Keep only essential fields: type and description
+            clean_param = {
+                'type': param_def.get('type', 'string'),
+                'description': param_def.get('description', '')[:80],  # Truncate long descriptions
+            }
+            clean_params[param_name] = clean_param
+        
+        if clean_params:
+            # Use repr() to get Python syntax (True instead of true)
+            params_str = repr(clean_params)
+            tools_code.append(f"        parameters={params_str},\n")
         else:
             tools_code.append(f"        parameters={{}},\n")
         
-        required = tool.get('inputSchema', {}).get('required', [])
+        required = tool.get('required_params', tool.get('inputSchema', {}).get('required', []))
         tools_code.append(f"        required_params={required},\n")
         tools_code.append(f"    ),\n")
     
@@ -254,201 +191,151 @@ def generate_notebook(state: MetaAgentState) -> dict:
     cells.append(create_notebook_cell("code", tools_code))
     
     # ==========================================================================
-    # Cell 6: Server Configs
+    # Cell 5: Server Configs (collapsible)
     # ==========================================================================
     cells.append(create_notebook_cell("markdown", [
-        "## 5️⃣ Server Configurations\n",
+        f"## 4️⃣ MCP Server Configurations ({len(mcp_servers)} servers)\n",
         "\n",
-        "MCP servers and API configurations:"
+        "Server configs for your agent. **Click to expand if needed.**"
     ]))
     
     servers_code = [
+        f"#@title 🔧 MCP Servers ({len(mcp_servers)}) - Click to expand\n",
         "from onsetlab import MCPServerConfig\n",
         "\n",
-        "# MCP Server configurations\n",
         "mcp_servers = [\n",
     ]
     
+    # Get filtered tool names by service for matching
+    filtered_tool_names = {t.get("name") for t in tool_schemas}
+    
     for server in mcp_servers:
-        servers_code.append(f"    MCPServerConfig(\n")
-        servers_code.append(f"        package=\"{server.get('package', '')}\",\n")
+        service = server.get("service") or server.get("service_id") or server.get("name", "unknown").lower()
+        package = server.get("package", {})
+        auth = server.get("auth", {})
         
-        # Include server_type (npm, docker, go, etc.)
-        server_type = server.get('server_type', 'npm')
-        if server_type != 'npm':
+        # Get package name based on type
+        if isinstance(package, dict):
+            pkg_type = package.get("type", "npm")
+            if pkg_type == "docker":
+                pkg_name = package.get("image", "")
+            elif pkg_type == "binary":
+                # For binary, use github_repo or command
+                pkg_name = package.get("github_repo") or package.get("command", "")
+            else:
+                # npm package
+                pkg_name = package.get("name", "")
+        else:
+            pkg_name = str(package)
+        
+        servers_code.append(f"    MCPServerConfig(\n")
+        servers_code.append(f"        package=\"{pkg_name}\",\n")
+        
+        # Server type
+        server_type = package.get("type", "npm") if isinstance(package, dict) else "npm"
+        if server_type != "npm":
             servers_code.append(f"        server_type=\"{server_type}\",\n")
         
-        servers_code.append(f"        auth_type=\"{server.get('auth_type', 'none')}\",\n")
+        # Docker-specific: add docker_image
+        if server_type == "docker" and isinstance(package, dict):
+            docker_image = package.get("image", "")
+            if docker_image:
+                servers_code.append(f"        docker_image=\"{docker_image}\",\n")
         
-        # Handle both old (env_var) and new (env_vars) formats
-        env_vars = server.get("env_vars") or []
-        if not env_vars and server.get("env_var"):
-            env_vars = [server.get("env_var")]
+        # Binary-specific: add command and args
+        if server_type == "binary" and isinstance(package, dict):
+            binary_cmd = package.get("command", "")
+            binary_args = package.get("args", [])
+            if binary_cmd:
+                servers_code.append(f"        command=\"{binary_cmd}\",\n")
+            if binary_args:
+                args_str = ", ".join(f'"{arg}"' for arg in binary_args)
+                servers_code.append(f"        args=[{args_str}],\n")
         
-        # Filter out transport/config vars - only keep actual credentials
-        env_vars = filter_credential_env_vars(env_vars)
+        # Auth type
+        auth_type = auth.get("type", "none")
+        servers_code.append(f"        auth_type=\"{auth_type}\",\n")
         
+        # Env vars
+        env_vars = auth.get("env_vars", [])
         if env_vars:
-            # Pass only CREDENTIAL env vars (filtered)
             env_vars_str = ", ".join(f'"{ev}"' for ev in env_vars)
             servers_code.append(f"        env_vars=[{env_vars_str}],\n")
         
-        servers_code.append(f"        description=\"{server.get('service', '').replace('_', ' ').title()} integration\",\n")
-        if server.get('setup_url'):
-            servers_code.append(f"        setup_url=\"{server['setup_url']}\",\n")
+        servers_code.append(f"        description=\"{service.replace('_', ' ').title()} integration\",\n")
         
-        # Include Docker image for non-npm servers
-        docker_image = server.get('docker_image')
-        if docker_image:
-            servers_code.append(f"        docker_image=\"{docker_image}\",\n")
+        # Tools for this server - ONLY filtered tools that belong to this service
+        all_server_tools = server.get("tools", [])
+        server_tool_names = []
+        for t in all_server_tools:
+            tool_name = t.get("name") if isinstance(t, dict) else t
+            # Only include if this tool was selected in filtering
+            if tool_name in filtered_tool_names:
+                server_tool_names.append(tool_name)
         
-        # Include tools for this server
-        server_tools = server.get('tools', [])
-        if server_tools:
-            tool_names = [t.get('name', t) if isinstance(t, dict) else t for t in server_tools]
-            tool_names_str = ", ".join(f'"{name}"' for name in tool_names)
+        if server_tool_names:
+            tool_names_str = ", ".join(f'"{name}"' for name in server_tool_names)
             servers_code.append(f"        tools=[{tool_names_str}],\n")
         
         servers_code.append(f"    ),\n")
     
     servers_code.append("]\n")
-    
     servers_code.append(f"\nprint(f'✅ Configured {{len(mcp_servers)}} MCP servers')")
     
     cells.append(create_notebook_cell("code", servers_code))
     
     # ==========================================================================
-    # Cell 6b: API Server Configurations (if any)
-    # ==========================================================================
-    if api_servers:
-        cells.append(create_notebook_cell("markdown", [
-            "## 5️⃣b API Server Configurations\n",
-            "\n",
-            f"The following **{len(api_servers)}** services need API implementation (no MCP server found):\n",
-            "\n",
-            "These endpoints will be auto-generated as `api_tools.py` in the agent package.\n"
-        ]))
-        
-        api_code = [
-            "from onsetlab import APIServerConfig, APIToolSchema\n",
-            "\n",
-            "# API Server configurations (for services without MCP)\n",
-            "# OnsetLab will generate api_tools.py with HTTP client code\n",
-            "\n",
-            "api_servers = [\n",
-        ]
-        
-        for api in api_servers:
-            service_name = api.get('service', 'api')
-            base_url = api.get('base_url', '')
-            auth_type = api.get('auth_type', 'bearer')
-            auth_header = api.get('auth_header', '')
-            env_var = api.get('env_var', f"{service_name.upper()}_API_KEY")
-            api_docs_url = api.get('api_docs_url', '')
-            
-            api_code.append(f"    APIServerConfig(\n")
-            api_code.append(f"        name='{service_name}',\n")
-            api_code.append(f"        base_url='{base_url}',\n")
-            api_code.append(f"        auth_type='{auth_type}',\n")
-            api_code.append(f"        auth_env_var='{env_var}',\n")
-            if auth_header:
-                # Extract header name from format like "Authorization: Bearer {token}"
-                header_name = auth_header.split(':')[0] if ':' in auth_header else auth_header
-                api_code.append(f"        auth_header='{header_name}',\n")
-            if api_docs_url:
-                api_code.append(f"        setup_url='{api_docs_url}',\n")
-            api_code.append(f"        description='{service_name.replace('_', ' ').title()} API integration',\n")
-            
-            # Add endpoints as APIToolSchema
-            endpoints = api.get('endpoints', [])
-            api_code.append(f"        tools=[\n")
-            for ep in endpoints[:10]:  # Limit to 10 endpoints per service
-                desc = ep.get('description', '').replace("'", "\\'").replace('\n', ' ')[:80]
-                api_code.append(f"            APIToolSchema(\n")
-                api_code.append(f"                name='{ep.get('name', 'unknown')}',\n")
-                api_code.append(f"                method='{ep.get('method', 'GET')}',\n")
-                api_code.append(f"                path='{ep.get('path', '/')}',\n")
-                api_code.append(f"                description='{desc}',\n")
-                api_code.append(f"                parameters={json.dumps(ep.get('parameters', {}))},\n")
-                api_code.append(f"                required_params={ep.get('required_params', [])},\n")
-                if ep.get('request_body'):
-                    api_code.append(f"                request_body_schema={json.dumps(ep['request_body'])},\n")
-                api_code.append(f"            ),\n")
-            if len(endpoints) > 10:
-                api_code.append(f"            # ... and {len(endpoints) - 10} more endpoints\n")
-            api_code.append(f"        ],\n")
-            api_code.append(f"    ),\n")
-        
-        api_code.append("]\n")
-        api_code.append(f"\nprint(f'✅ Configured {{len(api_servers)}} API servers')")
-        
-        cells.append(create_notebook_cell("code", api_code))
-    
-    # ==========================================================================
-    # Cell 7: Build Agent
+    # Cell 6: Build Agent
     # ==========================================================================
     cells.append(create_notebook_cell("markdown", [
-        "## 6️⃣ Build Your Agent\n",
+        "## 5️⃣ Build Your Agent\n",
         "\n",
-        "Now let's build the agent! This will:\n",
+        "This will:\n",
         "1. Generate a system prompt\n",
-        "2. Create synthetic training data\n",
-        "3. Fine-tune the model (~15 min on T4 GPU)\n",
-        "4. Package the agent for deployment"
+        "2. Create synthetic training data (~5 min)\n",
+        "3. Fine-tune the model (~10-15 min on T4 GPU)\n",
+        "4. Package everything for download"
     ]))
     
-    # Escape problem statement for Python string
+    # Escape problem statement
     escaped_problem = problem_statement.replace('"', '\\"').replace('\n', '\\n')
     
-    # Determine if we have API servers
-    has_api = len(api_servers) > 0
-    
-    # Calculate optimal examples based on tool count
-    auto_examples = len(tool_schemas) * 30  # ~30 per tool, will be calculated by builder
-    auto_examples = min(int(auto_examples * 1.65), 1500)  # Cap at 1500
+    # Calculate estimated examples
+    auto_examples = len(tool_schemas) * 30
+    auto_examples = min(int(auto_examples * 1.65), 1500)
     
     build_code = [
         "from onsetlab import AgentBuilder, BuildConfig\n",
+        "import os\n",
         "\n",
-        "# Build configuration\n",
-        f"# Auto-calculated: ~{auto_examples} examples for {len(tool_schemas)} tools\n",
         "config = BuildConfig(\n",
-        "    num_examples=None,         # Auto-calculate based on tool count\n",
-        "    batch_size=10,             # Examples per API call\n",
+        "    num_examples=None,         # Auto-calculate based on tool count (~25/tool)\n",
         "    base_model='qwen2.5-3b',   # Base model to fine-tune\n",
-        "    epochs=3,                  # Training epochs\n",
+        "    epochs=None,               # Auto-adjust based on dataset size\n",
         "    agent_name='my_agent',     # Name for your agent\n",
+        "    output_dir='./agent_build',\n",
         "    runtime='both',            # Generate Ollama + Python runtime\n",
-        "    use_llm_for_prompt=True,   # Use LLM for comprehensive system prompt\n",
         ")\n",
         "\n",
-        "# Create builder\n",
         "builder = AgentBuilder(\n",
         f"    problem_statement=\"\"\"{escaped_problem}\"\"\",\n",
         "    tools=tools,\n",
         "    mcp_servers=mcp_servers,\n",
-    ]
-    
-    # Add api_servers only if present
-    if has_api:
-        build_code.append("    api_servers=api_servers,  # API fallback services\n")
-    
-    build_code.extend([
         "    api_key=os.environ.get('ANTHROPIC_API_KEY') or os.environ.get('OPENAI_API_KEY'),\n",
         "    config=config,\n",
         ")\n",
         "\n",
         "# Build the agent!\n",
         "agent = builder.build()"
-    ])
+    ]
     
     cells.append(create_notebook_cell("code", build_code))
     
     # ==========================================================================
-    # Cell 8: Export Agent
+    # Cell 7: Export Agent
     # ==========================================================================
     cells.append(create_notebook_cell("markdown", [
-        "## 7️⃣ Download Your Agent\n",
+        "## 6️⃣ Download Your Agent\n",
         "\n",
         "Export and download your agent package:"
     ]))
@@ -465,26 +352,39 @@ def generate_notebook(state: MetaAgentState) -> dict:
     ]))
     
     # ==========================================================================
-    # Cell 9: Next Steps
+    # Cell 8: Next Steps
     # ==========================================================================
+    # Get service names for the instructions
+    service_names = []
+    for server in mcp_servers:
+        service = server.get("service") or server.get("service_id") or server.get("name", "").lower()
+        if service:
+            service_names.append(service.replace("_", " ").title())
+    
+    services_list = ", ".join(service_names) if service_names else "your services"
+    
     cells.append(create_notebook_cell("markdown", [
         "## 🎉 Next Steps\n",
         "\n",
         "Your agent has been built! To run it locally:\n",
         "\n",
+        "### 1. Unzip and setup\n",
         "```bash\n",
-        "# Unzip the agent\n",
         "unzip my_agent.zip\n",
         "cd my_agent\n",
-        "\n",
-        "# Install dependencies\n",
         "pip install -r requirements.txt\n",
+        "```\n",
         "\n",
-        "# Load the model in Ollama\n",
+        f"### 2. Configure service tokens ({services_list})\n",
+        "```bash\n",
+        "cp .env.example .env\n",
+        "# Edit .env and add your tokens\n",
+        "```\n",
+        "\n",
+        "### 3. Load model and run\n",
+        "```bash\n",
         "ollama create my_agent -f Modelfile\n",
-        "\n",
-        "# Run the agent\n",
-        "python agent.py\n",
+        "python agent.py --interactive\n",
         "```\n",
         "\n",
         "---\n",

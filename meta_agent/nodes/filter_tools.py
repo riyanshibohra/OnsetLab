@@ -170,11 +170,16 @@ Respond with valid JSON."""}
         selected_tool_names = {t["name"] for t in result.get("selected_tools", [])}
         reasoning = result.get("reasoning", "")
         
-        # Filter tools
+        # Filter tools - but ALWAYS include built-in tools
         filtered_tools = [
             tool for tool in source_tools
-            if tool.get("name") in selected_tool_names
+            if tool.get("name") in selected_tool_names or tool.get("_builtin", False)
         ]
+        
+        # Count built-in vs selected
+        builtin_count = sum(1 for t in filtered_tools if t.get("_builtin", False))
+        if builtin_count > 0:
+            print(f"   📌 Always including {builtin_count} built-in tools")
         
         print(f"   ✅ Filtered to {len(filtered_tools)} relevant tools")
         print(f"   🗑️ Excluded {len(source_tools) - len(filtered_tools)} tools")

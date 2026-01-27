@@ -107,6 +107,7 @@ class MetaAgentState(TypedDict, total=False):
 
 def create_initial_state(
     problem_statement: str,
+    selected_services: list[str],
     anthropic_api_key: str,
 ) -> MetaAgentState:
     """
@@ -114,18 +115,19 @@ def create_initial_state(
     
     Args:
         problem_statement: Description of what the agent should do
+        selected_services: Services selected by user in UI (e.g., ["github", "slack"])
         anthropic_api_key: Anthropic API key for Claude LLM calls
         
     Returns:
         Initialized MetaAgentState
     """
     return {
-        # Input
+        # Input (from UI)
         "problem_statement": problem_statement,
         "anthropic_api_key": anthropic_api_key,
+        "identified_services": selected_services,  # From UI selection
         
         # Initialize
-        "identified_services": [],
         "all_tools": [],
         "mcp_servers": [],
         "registry_services": [],

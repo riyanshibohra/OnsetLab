@@ -1,7 +1,8 @@
 """
-Meta-Agent LangGraph Definition (Registry-Based v2.0)
+Meta-Agent LangGraph Definition (Registry-Based v3.0)
 ======================================================
-Simplified workflow using registry instead of MCP discovery.
+Simplified workflow - UI provides service selection directly.
+No LLM needed for service identification.
 """
 
 from typing import Literal
@@ -9,7 +10,6 @@ from langgraph.graph import StateGraph, END
 
 from meta_agent.state import MetaAgentState, create_initial_state
 from meta_agent.nodes import (
-    parse_problem,
     load_registry,
     filter_tools,
     process_feedback,
@@ -40,48 +40,46 @@ def create_meta_agent_graph() -> StateGraph:
     """
     Create the registry-based Meta-Agent LangGraph.
     
-    Graph Flow:
+    Graph Flow (v3.0 - UI provides service selection):
     
-                    ┌──────────────────┐
-                    │  parse_problem   │  (Extract services from problem)
-                    └────────┬─────────┘
-                             │
-                             ▼
-                    ┌──────────────────┐
-                    │  load_registry   │  (Load tools from JSON files)
-                    └────────┬─────────┘
-                             │
-                             ▼
-                    ┌──────────────────┐
-                    │  filter_tools    │  (LLM selects relevant tools)
-                    └────────┬─────────┘
-                             │
-                             ▼
-                    ┌──────────────────┐
-                    │ HITL: User reviews│  (Human-in-the-Loop)
-                    │  process_feedback│
-                    └────────┬─────────┘
-                             │
-                    ┌────────┴─────────┐
-                    │                  │
-          add/remove│                  │approved
-                    │                  │
-        ┌───────────┘                  └──────────┐
-        │                                         │
-        ▼                                         ▼
-   (loop back)                        ┌──────────────────┐
-   load_registry or                   │generate_guides   │
-   filter_tools                       └────────┬─────────┘
-        │                                      │
-        │                                      ▼
-        │                          ┌──────────────────────┐
-        └────────────────────────► │ generate_notebook    │
-                                   └──────────┬───────────┘
-                                              │
-                                              ▼
-                                           ┌──────┐
-                                           │ END  │
-                                           └──────┘
+        [UI: User selects services]
+                    │
+                    ▼
+           ┌──────────────────┐
+           │  load_registry   │  (Load tools from JSON files)
+           └────────┬─────────┘
+                    │
+                    ▼
+           ┌──────────────────┐
+           │  filter_tools    │  (LLM selects relevant tools)
+           └────────┬─────────┘
+                    │
+                    ▼
+           ┌──────────────────┐
+           │ HITL: User reviews│  (Human-in-the-Loop)
+           │  process_feedback│
+           └────────┬─────────┘
+                    │
+           ┌────────┴─────────┐
+           │                  │
+ add/remove│                  │approved
+           │                  │
+       ┌───┘                  └───┐
+       │                          │
+       ▼                          ▼
+  (loop back)          ┌──────────────────┐
+  load_registry or     │generate_guides   │
+  filter_tools         └────────┬─────────┘
+       │                        │
+       │                        ▼
+       │            ┌──────────────────────┐
+       └──────────► │ generate_notebook    │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                            ┌──────┐
+                            │ END  │
+                            └──────┘
     
     Returns:
         Compiled StateGraph with HITL interrupt point
@@ -89,19 +87,17 @@ def create_meta_agent_graph() -> StateGraph:
     # Build the graph
     workflow = StateGraph(MetaAgentState)
     
-    # Add nodes
-    workflow.add_node("parse_problem", parse_problem)
+    # Add nodes (no parse_problem - UI handles service selection)
     workflow.add_node("load_registry", load_registry)
     workflow.add_node("filter_tools", filter_tools)
     workflow.add_node("process_feedback", process_feedback)
     workflow.add_node("generate_token_guides", generate_token_guides)
     workflow.add_node("generate_notebook", generate_notebook)
     
-    # Set entry point
-    workflow.set_entry_point("parse_problem")
+    # Set entry point - start directly from load_registry
+    workflow.set_entry_point("load_registry")
     
     # Linear flow to HITL point
-    workflow.add_edge("parse_problem", "load_registry")
     workflow.add_edge("load_registry", "filter_tools")
     workflow.add_edge("filter_tools", "process_feedback")
     
@@ -138,15 +134,15 @@ def get_graph():
 
 async def run_meta_agent(
     problem_statement: str,
+    selected_services: list[str],
     anthropic_api_key: str,
 ) -> dict:
     """
     Run the meta-agent to load registry and generate a Colab notebook.
     
-    This is the simplified registry-based flow (no Tavily search needed).
-    
     Args:
         problem_statement: Description of what the agent should do
+        selected_services: Services selected by user in UI (e.g., ["github", "slack"])
         anthropic_api_key: Anthropic API key for Claude LLM calls
         
     Returns:
@@ -161,16 +157,18 @@ async def run_meta_agent(
     # Create the graph
     graph = get_graph()
     
-    # Initialize state
+    # Initialize state with UI-selected services
     initial_state = create_initial_state(
         problem_statement=problem_statement,
+        selected_services=selected_services,
         anthropic_api_key=anthropic_api_key,
     )
     
     print("\n" + "=" * 60)
-    print("🤖 OnsetLab Meta-Agent (Registry-Based)")
+    print("🤖 OnsetLab Meta-Agent")
     print("=" * 60)
-    print(f"\n📝 Problem Statement:\n{problem_statement}\n")
+    print(f"\n📝 Problem: {problem_statement}")
+    print(f"🔧 Services: {', '.join(selected_services)}\n")
     
     # Run the graph (will pause at HITL point)
     result = await graph.ainvoke(initial_state)
@@ -192,6 +190,7 @@ async def run_meta_agent(
 
 def run_meta_agent_sync(
     problem_statement: str,
+    selected_services: list[str],
     anthropic_api_key: str,
 ) -> dict:
     """
@@ -202,12 +201,14 @@ def run_meta_agent_sync(
     import asyncio
     return asyncio.run(run_meta_agent(
         problem_statement=problem_statement,
+        selected_services=selected_services,
         anthropic_api_key=anthropic_api_key,
     ))
 
 
 def run_with_hitl(
     problem_statement: str,
+    selected_services: list[str],
     anthropic_api_key: str,
     feedback_handler = None,
 ):
@@ -216,6 +217,7 @@ def run_with_hitl(
     
     Args:
         problem_statement: What the agent should do
+        selected_services: Services selected by user (e.g., ["github", "slack"])
         anthropic_api_key: Anthropic API key
         feedback_handler: Callable that takes (state) and returns user_feedback string
                          If None, uses input() in terminal
@@ -226,8 +228,9 @@ def run_with_hitl(
     Example:
         # Terminal mode
         result = run_with_hitl(
-            "Manage GitHub issues",
-            "sk-ant-..."
+            problem_statement="Manage GitHub issues and send Slack notifications",
+            selected_services=["github", "slack"],
+            anthropic_api_key="sk-ant-..."
         )
         
         # UI mode
@@ -237,8 +240,9 @@ def run_with_hitl(
             return user_input_from_ui
         
         result = run_with_hitl(
-            "Manage GitHub issues",
-            "sk-ant-...",
+            problem_statement="...",
+            selected_services=["github"],
+            anthropic_api_key="sk-ant-...",
             feedback_handler=ui_feedback
         )
     """
@@ -249,13 +253,15 @@ def run_with_hitl(
         
         state = create_initial_state(
             problem_statement=problem_statement,
+            selected_services=selected_services,
             anthropic_api_key=anthropic_api_key,
         )
         
         print("\n" + "=" * 60)
-        print("🤖 OnsetLab Meta-Agent (Registry-Based)")
+        print("🤖 OnsetLab Meta-Agent")
         print("=" * 60)
-        print(f"\n📝 Problem: {problem_statement}\n")
+        print(f"\n📝 Problem: {problem_statement}")
+        print(f"🔧 Services: {', '.join(selected_services)}\n")
         
         # Run until HITL point
         state = await graph.ainvoke(state)
