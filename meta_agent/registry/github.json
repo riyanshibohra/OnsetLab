@@ -5,9 +5,9 @@
   "source": "https://github.com/github/github-mcp-server",
   "package": {
     "type": "docker",
-    "image": "ghcr.io/github/github-mcp-server",
+    "image": "ghcr.io/github/github-mcp-server:latest",
     "command": "docker",
-    "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server"]
+    "args": ["run", "--pull", "always", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server:latest"]
   },
   "auth": {
     "type": "token",
@@ -341,7 +341,7 @@
           "type": "string",
           "description": "Issue state",
           "required": false,
-          "enum": ["open", "closed"]
+          "enum": ["OPEN", "CLOSED"]
         },
         "assignees": {
           "type": "array",
@@ -416,7 +416,7 @@
           "type": "string",
           "description": "Filter by state",
           "required": false,
-          "enum": ["open", "closed"]
+          "enum": ["OPEN", "CLOSED"]
         },
         "labels": {
           "type": "array",
@@ -605,7 +605,7 @@
           "type": "string",
           "description": "Filter by state",
           "required": false,
-          "enum": ["open", "closed", "all"]
+          "enum": ["OPEN", "CLOSED", "ALL"]
         },
         "sort": {
           "type": "string",

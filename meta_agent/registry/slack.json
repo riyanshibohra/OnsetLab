@@ -11,7 +11,7 @@
   },
   "auth": {
     "type": "token",
-    "env_vars": ["SLACK_MCP_XOXP_TOKEN"],
+    "env_vars": ["SLACK_MCP_XOXP_TOKEN", "SLACK_MCP_ADD_MESSAGE_TOOL"],
     "setup_url": "https://api.slack.com/apps",
     "setup_instructions": "Use User OAuth token (xoxp-...), Bot token (xoxb-...), or Browser tokens (xoxc-... + xoxd-...). User OAuth recommended for full access.",
     "guide": {
