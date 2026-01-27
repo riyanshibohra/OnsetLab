@@ -184,7 +184,10 @@ class MCPServerConfig:
             elif self.server_type == "python":
                 self.command = "docker"  # Use Docker wrapper for Python
             elif self.server_type == "binary":
-                self.command = self.package  # Direct binary path
+                # For binaries, derive executable name from package or use npx as fallback
+                # e.g., "korotovsky/slack-mcp-server" -> try to find binary, else use npx
+                # Most binary MCP servers can also be run via npx now
+                self.command = "npx"  # Fallback to npx which works for most
             else:
                 self.command = "npx"  # Default to npm
         

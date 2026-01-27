@@ -172,8 +172,8 @@ class Validator:
         """Validate that a value matches expected JSON schema type."""
         type_checks = {
             "string": lambda v: isinstance(v, str),
-            "number": lambda v: isinstance(v, (int, float)),
-            "integer": lambda v: isinstance(v, int),
+            "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+            "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
             "boolean": lambda v: isinstance(v, bool),
             "array": lambda v: isinstance(v, list),
             "object": lambda v: isinstance(v, dict),
@@ -241,6 +241,18 @@ class Validator:
                         message=f"Tool '{tool_name}' has unknown param: '{param_name}'"
                     ))
             else:
+                # Skip None for optional parameters (valid to omit optional values)
+                is_required = param_name in required
+                if param_value is None:
+                    if is_required:
+                        errors.append(ValidationError(
+                            line_number=line_num,
+                            error_type="type_mismatch",
+                            message=f"Required param '{param_name}' is null"
+                        ))
+                    # Optional params can be None - skip type check
+                    continue
+                
                 # Validate type
                 expected_type = properties[param_name].get("type")
                 if expected_type and not self._validate_parameter_type(param_value, expected_type):

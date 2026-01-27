@@ -45,10 +45,24 @@ def load_config():
     with open(config_path, "r") as f:
         mcp_config = json.load(f)
     
-    return system_prompt, mcp_config
+    # Tool schemas (for parameter validation and normalization)
+    tools_path = os.path.join(SCRIPT_DIR, "tools.json")
+    tool_schemas = []
+    if os.path.exists(tools_path):
+        with open(tools_path, "r") as f:
+            tool_schemas = json.load(f)
+    
+    return system_prompt, mcp_config, tool_schemas
 
-SYSTEM_PROMPT, MCP_CONFIG = load_config()
+SYSTEM_PROMPT, MCP_CONFIG, TOOL_SCHEMAS = load_config()
 ALLOWED_TOOLS = set(MCP_CONFIG.get("allowed_tools", []))
+
+# Build tool schema lookup for runtime normalization
+TOOL_SCHEMA_MAP = {}
+for tool in TOOL_SCHEMAS:
+    name = tool.get("name", "")
+    if name:
+        TOOL_SCHEMA_MAP[name] = tool
 
 
 # ============================================================
@@ -143,9 +157,10 @@ class MCPClient:
     async def _send_request(self, method: str, params: dict) -> dict:
         """Send JSON-RPC request and get response."""
         self.request_id += 1
+        request_id = self.request_id
         request = {
             "jsonrpc": "2.0",
-            "id": self.request_id,
+            "id": request_id,
             "method": method,
             "params": params
         }
@@ -154,11 +169,33 @@ class MCPClient:
         self.process.stdin.write(request_line.encode())
         await self.process.stdin.drain()
         
-        # Read response
-        response_line = await self.process.stdout.readline()
-        if response_line:
-            return json.loads(response_line.decode())
-        return {"error": {"message": "No response from server"}}
+        # Read responses until we get one with matching id
+        # MCP servers can send notifications (no id) that we need to skip
+        max_reads = 20  # Prevent infinite loops
+        for _ in range(max_reads):
+            response_line = await self.process.stdout.readline()
+            if not response_line:
+                return {"error": {"message": "No response from server"}}
+            
+            try:
+                response = json.loads(response_line.decode())
+            except json.JSONDecodeError:
+                continue  # Skip malformed lines
+            
+            # Check if this is our response (has matching id)
+            if response.get("id") == request_id:
+                return response
+            
+            # Skip notifications (they have "method" but no "id")
+            if "method" in response and "id" not in response:
+                # This is a notification, skip it
+                continue
+            
+            # Skip responses for other requests (shouldn't happen often)
+            if "id" in response and response["id"] != request_id:
+                continue
+        
+        return {"error": {"message": "Timeout waiting for response"}}
     
     async def _send_notification(self, method: str, params: dict):
         """Send JSON-RPC notification (no response expected)."""
@@ -182,6 +219,70 @@ class MCPClient:
 
 
 # ============================================================
+# BUILT-IN MEMORY - Persistent key-value store
+# ============================================================
+
+class Memory:
+    """
+    Simple persistent memory for the agent.
+    
+    Stores key-value pairs in a JSON file that persists across sessions.
+    Automatically included in every agent - no MCP server needed.
+    """
+    
+    def __init__(self, storage_path: str = None):
+        if storage_path is None:
+            storage_path = os.path.join(SCRIPT_DIR, ".agent_memory.json")
+        self.storage_path = storage_path
+        self._data = self._load()
+    
+    def _load(self) -> dict:
+        """Load memory from disk."""
+        if os.path.exists(self.storage_path):
+            try:
+                with open(self.storage_path, "r") as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+    
+    def _save(self):
+        """Save memory to disk."""
+        with open(self.storage_path, "w") as f:
+            json.dump(self._data, f, indent=2)
+    
+    def set(self, key: str, value: str) -> dict:
+        """Store a value."""
+        self._data[key] = value
+        self._save()
+        return {"status": "success", "message": f"Stored '{key}' = '{value}'"}
+    
+    def get(self, key: str) -> dict:
+        """Retrieve a value."""
+        if key in self._data:
+            return {"status": "success", "key": key, "value": self._data[key]}
+        return {"status": "not_found", "message": f"Key '{key}' not found in memory"}
+    
+    def delete(self, key: str) -> dict:
+        """Remove a value."""
+        if key in self._data:
+            del self._data[key]
+            self._save()
+            return {"status": "success", "message": f"Deleted '{key}'"}
+        return {"status": "not_found", "message": f"Key '{key}' not found"}
+    
+    def list_keys(self) -> dict:
+        """List all stored keys."""
+        if self._data:
+            return {"status": "success", "keys": list(self._data.keys()), "count": len(self._data)}
+        return {"status": "empty", "message": "No items stored in memory"}
+
+
+# Built-in memory tools (always available)
+BUILTIN_MEMORY_TOOLS = {"memory_set", "memory_get", "memory_delete", "memory_list"}
+
+
+# ============================================================
 # TOOL MANAGER - Routes to MCP servers or API functions
 # ============================================================
 
@@ -190,6 +291,7 @@ class ToolManager:
     Manages both MCP servers and direct API tools.
     
     Routes tool calls to:
+    - Built-in tools (memory) - always available
     - MCP servers (via JSON-RPC) for services with MCP support
     - API functions (via api_tools.py) for direct REST API services
     """
@@ -201,6 +303,9 @@ class ToolManager:
         self.api_tools = set(config.get("api_tools", []))
         self.mcp_tools = set(config.get("mcp_tools", []))
         self.allowed_tools = set(config.get("allowed_tools", []))
+        
+        # Built-in memory (always available)
+        self.memory = Memory()
     
     async def start_all(self):
         """Start all configured servers."""
@@ -237,16 +342,25 @@ class ToolManager:
         Route tool call to correct backend (MCP or API).
         
         Order of routing:
-        1. Check if tool is allowed (whitelist)
-        2. Check if tool is an API tool -> call via api_tools.py
-        3. Check if tool is an MCP tool -> call via MCP server
-        4. Fallback: try MCP servers
+        1. Check if tool is a built-in (memory) -> handle directly
+        2. Check if tool is allowed (whitelist)
+        3. Check if tool is an API tool -> call via api_tools.py
+        4. Check if tool is an MCP tool -> call via MCP server
+        5. Fallback: try MCP servers
         """
+        
+        # Check if this is a built-in memory tool (always available)
+        if tool_name in BUILTIN_MEMORY_TOOLS:
+            return self._call_memory_tool(tool_name, params)
         
         # Validate tool is allowed
         if self.allowed_tools and tool_name not in self.allowed_tools:
-            available = ", ".join(sorted(self.allowed_tools)[:5])
-            return f"Tool '{tool_name}' is not available. Try: {available}..."
+            available = ", ".join(sorted(self.allowed_tools)[:10])
+            return (
+                f"INVALID_TOOL: '{tool_name}' does not exist. "
+                f"You can ONLY use these tools: {available}. "
+                f"If the user asked a question (like 'what can you do'), just answer with text - no tool needed."
+            )
         
         # Check if this is an API tool
         if tool_name in self.api_tools:
@@ -254,6 +368,23 @@ class ToolManager:
         
         # Route to MCP
         return await self._call_mcp_tool(tool_name, params)
+    
+    def _call_memory_tool(self, tool_name: str, params: dict) -> str:
+        """Call a built-in memory tool."""
+        try:
+            if tool_name == "memory_set":
+                result = self.memory.set(params.get("key", ""), params.get("value", ""))
+            elif tool_name == "memory_get":
+                result = self.memory.get(params.get("key", ""))
+            elif tool_name == "memory_delete":
+                result = self.memory.delete(params.get("key", ""))
+            elif tool_name == "memory_list":
+                result = self.memory.list_keys()
+            else:
+                result = {"error": f"Unknown memory tool: {tool_name}"}
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
     
     def _call_api_tool(self, tool_name: str, params: dict) -> str:
         """Call an API tool (sync, runs in thread)."""
@@ -266,8 +397,188 @@ class ToolManager:
         else:
             return f"API tools not available for: {tool_name}"
     
-    async def _call_mcp_tool(self, tool_name: str, params: dict) -> str:
-        """Call an MCP tool."""
+    def _normalize_params(self, tool_name: str, params: dict) -> dict:
+        """
+        Normalize parameter values at runtime using tool schemas.
+        
+        Fixes common issues like:
+        - Parameter name aliases: "channel" -> "channel_id"
+        - Lowercase enum values: "open" -> "OPEN" (based on schema)
+        - String numbers: "10" -> 10 (for pagination)
+        - Array wrapping: "bug" -> ["bug"] (if schema expects array)
+        """
+        # Get tool schema for this tool
+        tool_schema = TOOL_SCHEMA_MAP.get(tool_name, {})
+        schema_params = {}
+        
+        # Handle both formats: inputSchema.properties or direct parameters
+        if "inputSchema" in tool_schema:
+            schema_params = tool_schema.get("inputSchema", {}).get("properties", {})
+        else:
+            schema_params = tool_schema.get("parameters", {})
+        
+        # Parameter name aliases (model often uses wrong names)
+        PARAM_ALIASES = {
+            "channel": "channel_id",
+            "message": "payload",
+            "text": "payload",
+            "content": "body",
+            "issue": "issue_number",
+            "number": "issue_number",
+        }
+        
+        normalized = {}
+        for key, value in params.items():
+            # Check if this param should be aliased
+            if key in PARAM_ALIASES and key not in schema_params:
+                alias = PARAM_ALIASES[key]
+                if alias in schema_params:
+                    normalized[alias] = value
+                    continue
+            normalized[key] = value
+        
+        # Also copy params that weren't aliased
+        params = normalized
+        normalized = params.copy()
+        
+        for param, value in params.items():
+            param_schema = schema_params.get(param, {})
+            if not isinstance(param_schema, dict):
+                continue
+            
+            # Fix enum values (case-insensitive match to correct case)
+            enum_values = param_schema.get("enum")
+            if enum_values:
+                # Build case-insensitive lookup
+                enum_map = {str(v).lower(): v for v in enum_values}
+                
+                if isinstance(value, str):
+                    value_lower = value.lower()
+                    if value_lower in enum_map:
+                        normalized[param] = enum_map[value_lower]
+                elif isinstance(value, list):
+                    fixed_list = []
+                    for v in value:
+                        if isinstance(v, str):
+                            v_lower = v.lower()
+                            if v_lower in enum_map:
+                                fixed_list.append(enum_map[v_lower])
+                            else:
+                                fixed_list.append(v)
+                        else:
+                            fixed_list.append(v)
+                    normalized[param] = fixed_list
+            
+            # Fix type mismatches
+            expected_type = param_schema.get("type")
+            
+            # Array: wrap single value
+            if expected_type == "array" and not isinstance(value, list):
+                if value:
+                    normalized[param] = [value]
+                else:
+                    normalized[param] = []
+            
+            # Number: convert string to int/float
+            elif expected_type in ("integer", "number") and isinstance(value, str):
+                try:
+                    normalized[param] = int(value) if expected_type == "integer" else float(value)
+                except ValueError:
+                    pass
+            
+            # Boolean: convert string
+            elif expected_type == "boolean" and isinstance(value, str):
+                normalized[param] = value.lower() in ("true", "yes", "1")
+        
+        return normalized
+    
+    def _analyze_error(self, result: str) -> dict:
+        """
+        Analyze an error response to determine if it's fixable.
+        
+        Returns dict with:
+          - is_error: bool
+          - error_type: str (param_error, auth_error, not_found, unknown)
+          - fix_hint: str (suggested fix)
+          - fixable_params: dict (param -> suggested value)
+        """
+        result_lower = result.lower()
+        result_trimmed = result.strip()
+        
+        # Success indicators - if data is returned, it's not an error
+        # JSON arrays/objects with data are success
+        if result_trimmed.startswith('{"') and '"id"' in result:
+            return {"is_error": False}
+        if result_trimmed.startswith('[{') and len(result) > 10:
+            return {"is_error": False}
+        if '"issues"' in result or '"items"' in result or '"channels"' in result:
+            return {"is_error": False}
+        
+        # Only treat as error if it STARTS with error indicators
+        # This avoids false positives from content containing "error" words
+        error_prefixes = ["error:", "error ", "failed:", "failed ", "invalid", "unauthorized", "forbidden"]
+        is_error_message = any(result_lower.startswith(prefix) for prefix in error_prefixes)
+        
+        # Also check for short responses with error keywords (actual error messages are usually short)
+        is_short_error = len(result) < 200 and any(x in result_lower for x in ["error", "failed", "invalid"])
+        
+        if not is_error_message and not is_short_error:
+            return {"is_error": False}
+        
+        analysis = {"is_error": True, "error_type": "unknown", "fix_hint": "", "fixable_params": {}}
+        
+        # Auth errors - not fixable automatically (only for actual error messages)
+        auth_keywords = ["unauthorized", "forbidden", "authentication failed", "invalid token", "bad credentials", "scope"]
+        if any(x in result_lower for x in auth_keywords):
+            analysis["error_type"] = "auth_error"
+            analysis["fix_hint"] = "Check your API token/credentials in .env file"
+            return analysis
+        
+        # Not found - might be wrong ID
+        if "not found" in result_lower or "404" in result:
+            analysis["error_type"] = "not_found"
+            analysis["fix_hint"] = "The resource may not exist or ID is incorrect"
+            return analysis
+        
+        # Param errors - potentially fixable
+        if any(x in result_lower for x in ["invalid value", "expected", "must be", "enum"]):
+            analysis["error_type"] = "param_error"
+            
+            # Try to extract what's expected
+            import re
+            
+            # Pattern: "Expected X to be one of: A, B, C"
+            match = re.search(r'expected ["\']?(\w+)["\']? to be one of[:\s]+([A-Z, ]+)', result, re.I)
+            if match:
+                param_value = match.group(1)
+                valid_values = [v.strip() for v in match.group(2).split(",")]
+                analysis["fix_hint"] = f"Use one of: {valid_values}"
+                # Try to map the invalid value to a valid one
+                for valid in valid_values:
+                    if param_value.lower() == valid.lower():
+                        analysis["fixable_params"]["state"] = valid
+                        break
+            
+            return analysis
+        
+        return analysis
+    
+    async def _call_mcp_tool(self, tool_name: str, params: dict, retry_count: int = 0) -> str:
+        """
+        Call an MCP tool with automatic error recovery and API fallback.
+        
+        Strategy:
+        1. Normalize params before calling
+        2. Call MCP server
+        3. If error: analyze and attempt fix
+        4. Retry up to 2 times with corrections
+        5. If still failing and API equivalent exists: try API
+        """
+        MAX_RETRIES = 2
+        
+        # Normalize params to fix common model errors (lowercase enums, etc.)
+        params = self._normalize_params(tool_name, params)
+        
         # Find server for this tool
         server_name = self.tool_to_mcp.get(tool_name)
         if not server_name:
@@ -277,10 +588,54 @@ class ToolManager:
                 break
         
         if not server_name or server_name not in self.mcp_clients:
+            # No MCP server - try API fallback
+            if tool_name in self.api_tools:
+                print(f"   📡 No MCP server, trying API fallback...")
+                return self._call_api_tool(tool_name, params)
             return f"No server available for tool: {tool_name}"
         
         client = self.mcp_clients[server_name]
-        return await client.call_tool(tool_name, params)
+        
+        try:
+            result = await client.call_tool(tool_name, params)
+        except Exception as e:
+            # MCP call failed entirely - try API fallback
+            if tool_name in self.api_tools:
+                print(f"   📡 MCP call failed ({e}), trying API fallback...")
+                return self._call_api_tool(tool_name, params)
+            return f"MCP tool call failed: {e}"
+        
+        # Analyze result for errors
+        analysis = self._analyze_error(result)
+        
+        if analysis["is_error"]:
+            error_type = analysis["error_type"]
+            
+            # Auth errors - can't fix, but give clear message
+            if error_type == "auth_error":
+                return f"Authentication error: {analysis['fix_hint']}\n\nOriginal error: {result[:500]}"
+            
+            # Param errors - try to fix and retry
+            if error_type == "param_error" and retry_count < MAX_RETRIES:
+                if analysis["fixable_params"]:
+                    print(f"   🔄 Attempting auto-fix: {analysis['fixable_params']}")
+                    fixed_params = {**params, **analysis["fixable_params"]}
+                    return await self._call_mcp_tool(tool_name, fixed_params, retry_count + 1)
+                elif retry_count == 0:
+                    print(f"   🔄 Retrying with stricter normalization...")
+                    return await self._call_mcp_tool(tool_name, params, retry_count + 1)
+            
+            # If MCP failed after retries and API is available, try API as last resort
+            if retry_count >= MAX_RETRIES and tool_name in self.api_tools:
+                print(f"   📡 MCP retries exhausted, trying API fallback...")
+                api_result = self._call_api_tool(tool_name, params)
+                # Return API result if it doesn't look like an error
+                api_analysis = self._analyze_error(api_result)
+                if not api_analysis["is_error"]:
+                    return api_result
+                # Both failed - return MCP error as it's likely more specific
+        
+        return result
     
     async def stop_all(self):
         """Stop all MCP servers gracefully."""
@@ -376,11 +731,47 @@ def parse_tool_call(response: str) -> dict:
     brace_end = json_str.rfind("}") + 1
     
     if brace_start >= 0 and brace_end > brace_start:
+        raw_json = json_str[brace_start:brace_end]
+        
+        # Fix common JSON issues from LLM output:
+        # 1. Newlines inside string values (invalid JSON)
+        # 2. Unescaped quotes inside strings
+        def fix_json_string(s: str) -> str:
+            # Replace actual newlines with escaped \n (only inside strings)
+            # Simple approach: replace newlines between quotes
+            result = []
+            in_string = False
+            escape_next = False
+            for i, char in enumerate(s):
+                if escape_next:
+                    result.append(char)
+                    escape_next = False
+                    continue
+                if char == '\\':
+                    result.append(char)
+                    escape_next = True
+                    continue
+                if char == '"' and not escape_next:
+                    in_string = not in_string
+                    result.append(char)
+                elif char == '\n' and in_string:
+                    result.append('\\n')  # Escape newline inside string
+                elif char == '\r' and in_string:
+                    result.append('\\r')  # Escape carriage return
+                else:
+                    result.append(char)
+            return ''.join(result)
+        
         try:
-            return json.loads(json_str[brace_start:brace_end])
-        except json.JSONDecodeError as e:
-            print(f"   ⚠️  Failed to parse tool call JSON: {e}")
-            print(f"   JSON was: {json_str[brace_start:brace_end][:200]}...")
+            return json.loads(raw_json)
+        except json.JSONDecodeError:
+            # Try with fixed JSON
+            try:
+                fixed_json = fix_json_string(raw_json)
+                return json.loads(fixed_json)
+            except json.JSONDecodeError as e:
+                print(f"   ⚠️  Failed to parse tool call JSON: {e}")
+                print(f"   JSON was: {raw_json[:200]}...")
     return None
 
 
@@ -388,12 +779,75 @@ def parse_tool_call(response: str) -> dict:
 # AGENT LOOP - Main execution loop
 # ============================================================
 
-async def run_agent(tools: ToolManager, model, query: str) -> str:
-    """Run the agentic loop with MCP + API tool execution and loop detection."""
+def format_conversation_context(history: list, max_turns: int = 5) -> str:
+    """
+    Format recent conversation history as context for the model.
+    
+    Args:
+        history: List of {"role": "user"|"assistant", "content": str, "tool_results": []}
+        max_turns: Maximum number of turns to include
+    
+    Returns:
+        Formatted context string to prepend to user query
+    """
+    if not history:
+        return ""
+    
+    # Take only the last N turns
+    recent = history[-max_turns:]
+    
+    context_lines = ["[Conversation Context]"]
+    for turn in recent:
+        role = turn.get("role", "user")
+        content = turn.get("content", "")
+        tool_results = turn.get("tool_results", [])
+        
+        if role == "user":
+            context_lines.append(f"User asked: {content}")
+        elif role == "assistant":
+            if tool_results:
+                for tr in tool_results:
+                    tool_name = tr.get("tool", "unknown")
+                    result_preview = tr.get("result", "")[:200]
+                    context_lines.append(f"Agent called {tool_name} → {result_preview}")
+            if content and not content.startswith("<tool_call>"):
+                context_lines.append(f"Agent replied: {content[:200]}")
+    
+    context_lines.append("[Current Query]")
+    return "\n".join(context_lines)
+
+
+async def run_agent(tools: ToolManager, model, query: str, conversation_history: list = None) -> tuple:
+    """
+    Run the agentic loop with MCP + API tool execution and loop detection.
+    
+    Args:
+        tools: ToolManager instance
+        model: Loaded LLM model
+        query: Current user query
+        conversation_history: Previous conversation turns for context
+    
+    Returns:
+        Tuple of (response_text, tool_results_list)
+    """
+    # Inject known context from memory (channel IDs, repo names, etc.)
+    # This helps the model use correct values even if context overflowed
+    known_context = get_context_injection(tools.memory)
+    
+    # Build context-aware query if we have history
+    if conversation_history:
+        context = format_conversation_context(conversation_history)
+        augmented_query = f"{known_context}{context}\n{query}"
+    else:
+        augmented_query = f"{known_context}{query}" if known_context else query
+    
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": query},
+        {"role": "user", "content": augmented_query},
     ]
+    
+    # Track tool results for this turn
+    turn_tool_results = []
     
     # Loop detection: track last tool call
     last_tool_call = None
@@ -432,16 +886,203 @@ async def run_agent(tools: ToolManager, model, query: str) -> str:
             result_preview = result[:300] if len(result) > 300 else result
             print(f"📋 Result: {result_preview}...")
             
+            # Handle invalid tool calls - guide model to answer without tools
+            if result.startswith("INVALID_TOOL:"):
+                print(f"   ⚠️  Invalid tool: {tool_name}")
+                messages.append({"role": "assistant", "content": response})
+                messages.append({
+                    "role": "tool", 
+                    "content": result + "\n\nIMPORTANT: Answer the user's question directly without calling a tool. "
+                               "If they asked about your capabilities, explain what you can do based on your available tools."
+                })
+                continue
+            
+            # Auto-extract and save important entities to memory
+            # This helps the model remember channel IDs, repo names, etc.
+            extracted = extract_entities(tool_name, result, tools.memory)
+            if extracted:
+                print(f"💾 Saved to memory: {list(extracted.keys())}")
+            
+            # Track tool result for conversation history
+            turn_tool_results.append({
+                "tool": tool_name,
+                "params": params,
+                "result": result_preview
+            })
+            
             messages.append({"role": "assistant", "content": response})
-            messages.append({"role": "tool", "content": result})
+            
+            # Truncate result to fit in context window (max ~2000 chars for tool results)
+            # This prevents "Requested tokens exceed context window" errors
+            MAX_RESULT_CHARS = 2000
+            if len(result) > MAX_RESULT_CHARS:
+                result_truncated = result[:MAX_RESULT_CHARS] + f"\n...[truncated, {len(result)} total chars]"
+            else:
+                result_truncated = result
+            messages.append({"role": "tool", "content": result_truncated})
         else:
-            return response
+            return response, turn_tool_results
     
-    return "Max iterations reached. The agent made too many tool calls without providing a final answer."
+    return "Max iterations reached. The agent made too many tool calls without providing a final answer.", turn_tool_results
+
+
+def extract_entities(tool_name: str, result: str, memory: 'Memory') -> dict:
+    """
+    Auto-extract name→ID pairs from tool results and save to memory.
+    
+    Handles both JSON and CSV formats.
+    Saves as entity_{name} = {id} for later reference (e.g., entity_#social = C097U9FBMG8).
+    """
+    extracted = {}
+    
+    # Try CSV format first (Slack returns CSV)
+    if result and "," in result and "\n" in result:
+        lines = result.strip().split("\n")
+        if len(lines) >= 2:
+            # Check if first line looks like a header
+            header = lines[0].split(",")
+            header_lower = [h.lower().strip() for h in header]
+            
+            # Look for ID and Name columns
+            id_idx = None
+            name_idx = None
+            for i, h in enumerate(header_lower):
+                if h == "id" or h.endswith("_id"):
+                    id_idx = i
+                elif h in ("name", "channel", "title", "username"):
+                    name_idx = i
+            
+            if id_idx is not None and name_idx is not None:
+                # Determine entity type from header (channel, user, repo, etc.)
+                # Use the name column header to infer type
+                name_header = header[name_idx].lower().strip()
+                if "channel" in name_header or header_lower[id_idx].startswith("c"):
+                    entity_type = "channel"
+                elif "user" in name_header:
+                    entity_type = "user"
+                elif "repo" in name_header:
+                    entity_type = "repo"
+                else:
+                    entity_type = "entity"  # Generic fallback
+                
+                # Parse CSV rows
+                for line in lines[1:]:
+                    if not line.strip():
+                        continue
+                    cols = line.split(",")
+                    if len(cols) > max(id_idx, name_idx):
+                        id_val = cols[id_idx].strip()
+                        name_val = cols[name_idx].strip()
+                        if id_val and name_val:
+                            # Clean up name (remove # prefix for storage key)
+                            clean_name = name_val.lstrip("#").lower().replace(" ", "_").replace("-", "_")[:30]
+                            key = f"{entity_type}_{clean_name}"
+                            memory.set(key, id_val)
+                            extracted[key] = id_val
+                
+                if extracted:
+                    return extracted
+    
+    # Try JSON format
+    try:
+        data = json.loads(result) if isinstance(result, str) else result
+    except:
+        return extracted
+    
+    def find_name_id_pairs(obj, prefix=""):
+        """Recursively find objects with name+id pairs."""
+        pairs = []
+        
+        if isinstance(obj, dict):
+            # Check if this object has both name-like and id-like fields
+            id_val = None
+            name_val = None
+            
+            for key, val in obj.items():
+                key_lower = key.lower()
+                if isinstance(val, str):
+                    # ID fields: id, channel_id, repo_id, etc.
+                    if key_lower == "id" or key_lower.endswith("_id"):
+                        id_val = val
+                    # Name fields: name, channel_name, title, etc.
+                    elif key_lower in ("name", "title", "channel_name", "repo_name", "username"):
+                        name_val = val
+            
+            if id_val and name_val:
+                pairs.append((name_val, id_val))
+            
+            # Recurse into nested objects
+            for key, val in obj.items():
+                pairs.extend(find_name_id_pairs(val, prefix=key))
+        
+        elif isinstance(obj, list):
+            for item in obj[:10]:  # Limit to first 10 items
+                pairs.extend(find_name_id_pairs(item, prefix))
+        
+        return pairs
+    
+    # Find all name→id pairs in the result
+    pairs = find_name_id_pairs(data)
+    
+    for name, id_val in pairs[:10]:  # Save up to 10 entities
+        # Normalize the key: entity_{sanitized_name}
+        safe_name = str(name).lower().replace(" ", "_").replace("#", "")[:30]
+        key = f"entity_{safe_name}"
+        memory.set(key, id_val)
+        extracted[name] = id_val
+    
+    return extracted
+
+
+def get_context_injection(memory: 'Memory') -> str:
+    """
+    Build a context string from memory to inject into queries.
+    Uses stored channels, entities, and user preferences.
+    """
+    keys = memory.list_keys()
+    if not keys:
+        return ""
+    
+    context_parts = []
+    
+    # Group by entity type (channel_, user_, repo_, entity_)
+    entity_types = {}
+    user_keys = []
+    
+    for key in keys:
+        val = memory.get(key)
+        if not val:
+            continue
+            
+        # Check known prefixes
+        if key.startswith("channel_"):
+            entity_types.setdefault("Slack channels", []).append((key.replace("channel_", "#"), val))
+        elif key.startswith("user_"):
+            entity_types.setdefault("Users", []).append((key.replace("user_", ""), val))
+        elif key.startswith("repo_"):
+            entity_types.setdefault("Repos", []).append((key.replace("repo_", ""), val))
+        elif key.startswith("entity_"):
+            entity_types.setdefault("IDs", []).append((key.replace("entity_", ""), val))
+        else:
+            user_keys.append((key, val))
+    
+    # Format each entity type
+    for type_name, items in entity_types.items():
+        if items:
+            items_str = ", ".join([f"{name}={val}" for name, val in items[:10]])
+            context_parts.append(f"{type_name}: {items_str}")
+    
+    # User-set values
+    for key, val in user_keys[:10]:
+        context_parts.append(f"{key}: {val}")
+    
+    if context_parts:
+        return "\n[Known Context]\n" + "\n".join(context_parts[:15]) + "\n"
+    return ""
 
 
 async def interactive_mode(tools: ToolManager, model):
-    """Interactive chat mode."""
+    """Interactive chat mode with conversation history."""
     print(f"\n🤖 {AGENT_NAME} Ready!")
     print(f"   Tools: {len(ALLOWED_TOOLS)} available")
     
@@ -455,8 +1096,11 @@ async def interactive_mode(tools: ToolManager, model):
     elif api_count:
         print(f"   Backend: {api_count} API tools")
     
-    print("   Type 'quit' to exit")
+    print("   Type 'quit' to exit, 'clear' to reset history")
     print("-" * 50)
+    
+    # Conversation history for context
+    conversation_history = []
     
     while True:
         try:
@@ -464,11 +1108,31 @@ async def interactive_mode(tools: ToolManager, model):
             if query.lower() in ("quit", "exit", "q"):
                 print("Goodbye!")
                 break
+            if query.lower() == "clear":
+                conversation_history = []
+                print("🗑️  Conversation history cleared.")
+                continue
             if not query:
                 continue
             
-            response = await run_agent(tools, model, query)
+            # Run agent with conversation context
+            response, tool_results = await run_agent(tools, model, query, conversation_history)
             print(f"\n🤖 Agent: {response}")
+            
+            # Update conversation history
+            conversation_history.append({
+                "role": "user",
+                "content": query
+            })
+            conversation_history.append({
+                "role": "assistant", 
+                "content": response,
+                "tool_results": tool_results
+            })
+            
+            # Keep history manageable (last 10 turns = 20 entries)
+            if len(conversation_history) > 20:
+                conversation_history = conversation_history[-20:]
                 
         except KeyboardInterrupt:
             print("\nGoodbye!")
@@ -504,7 +1168,7 @@ async def async_main(query: str = None, interactive: bool = False):
         if interactive or not query:
             await interactive_mode(tools, model)
         else:
-            response = await run_agent(tools, model, query)
+            response, _ = await run_agent(tools, model, query)
             print(response)
     finally:
         await tools.stop_all()

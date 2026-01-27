@@ -16,33 +16,34 @@ from pathlib import Path
 # =============================================================================
 # Model Configuration
 # =============================================================================
-# We use Qwen2.5-3B-Instruct as the ONLY supported model.
-# Reasons:
-#   - Best tool calling accuracy among non-gated SLMs
-#   - 3B parameters = good balance of quality vs. speed
-#   - 32K context window = handles complex prompts
-#   - Non-gated = no Hugging Face auth required
+# Supported models for tool-calling fine-tuning.
+# Qwen2.5-7B recommended for production, 3B for quick testing.
 #
-MODEL_CONFIG = {
-    "name": "Qwen2.5-3B-Instruct",
-    "unsloth_id": "unsloth/Qwen2.5-3B-Instruct-bnb-4bit",
-    "size": "3B",
-    "context_length": 32768,
-}
-
-# Keep for backwards compatibility
 SUPPORTED_MODELS = {
-    "qwen2.5-3b": MODEL_CONFIG,
+    "qwen2.5-3b": {
+        "name": "Qwen2.5-3B-Instruct",
+        "unsloth_id": "unsloth/Qwen2.5-3B-Instruct-bnb-4bit",
+        "size": "3B",
+        "context_length": 32768,
+    },
+    "qwen2.5-7b": {
+        "name": "Qwen2.5-7B-Instruct",
+        "unsloth_id": "unsloth/Qwen2.5-7B-Instruct-bnb-4bit",
+        "size": "7B",
+        "context_length": 131072,
+    },
 }
 
-DEFAULT_MODEL = "qwen2.5-3b"
+# Default to 7B for better tool-calling performance
+DEFAULT_MODEL = "qwen2.5-7b"
+MODEL_CONFIG = SUPPORTED_MODELS[DEFAULT_MODEL]
 
 
 @dataclass
 class TrainerConfig:
-    """Configuration for fine-tuning with Qwen2.5-3B-Instruct."""
+    """Configuration for fine-tuning. Supports qwen2.5-3b and qwen2.5-7b."""
     
-    # Model settings (only Qwen2.5-3B is supported)
+    # Model settings: "qwen2.5-3b" (fast) or "qwen2.5-7b" (recommended)
     base_model: str = DEFAULT_MODEL
     
     # LoRA settings (auto-adjusted based on dataset size if None)
@@ -114,12 +115,13 @@ class TrainerConfig:
             }
             size_category = "small"
         elif num_examples < 500:
-            # Medium dataset: balanced
+            # Medium dataset: slightly more epochs for better generalization
+            # 3B models need more passes on medium data to learn patterns reliably
             defaults = {
                 "lora_rank": 16,
                 "lora_alpha": 16,
-                "epochs": 3,
-                "learning_rate": 2e-4,
+                "epochs": 4,  # Bumped from 3 to 4 for better tool+conversation balance
+                "learning_rate": 1.5e-4,  # Slightly lower for better generalization
             }
             size_category = "medium"
         else:

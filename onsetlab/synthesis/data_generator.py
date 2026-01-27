@@ -40,18 +40,20 @@ class DataGenConfig:
     """
     
     # Per-tool limits (ENFORCED)
-    min_per_tool: int = 10            # Minimum - below this = underfitting
-    examples_per_tool: int = 25       # Suggested - sweet spot for 3B
-    max_per_tool: int = 40            # Maximum - above this = overfitting risk
+    min_per_tool: int = 15            # Minimum - below this = underfitting
+    examples_per_tool: int = 35       # Suggested - higher for better generalization
+    max_per_tool: int = 50            # Maximum - 3B can handle more with LoRA
     
     # Distribution (must sum to 1.0)
     single_tool_ratio: float = 0.75   # 75% successful tool calls
     edge_case_ratio: float = 0.25     # 25% edge cases
     
     # Edge case breakdown (within the 25%)
-    clarification_ratio: float = 0.60  # 60% of edge cases = 15% total
-    refusal_ratio: float = 0.20        # 20% of edge cases = 5% total
-    casual_ratio: float = 0.20         # 20% of edge cases = 5% total
+    # IMPORTANT: casual needs higher % because small models default to tool calls
+    clarification_ratio: float = 0.25  # 25% of edge cases = 6.25% total
+    follow_up_ratio: float = 0.15      # 15% of edge cases = 3.75% total
+    refusal_ratio: float = 0.20        # 20% of edge cases = 5% total (invalid tool, out of scope)
+    casual_ratio: float = 0.40         # 40% of edge cases = 10% total (greetings, thanks, questions)
     
     # Split ratios
     train_ratio: float = 0.85
@@ -59,7 +61,7 @@ class DataGenConfig:
     test_ratio: float = 0.05
     
     # Batch settings
-    batch_size: int = 10              # Examples per LLM call
+    batch_size: int = 25              # Examples per LLM call (higher = faster generation)
     max_retries: int = 3
     
     # API settings
@@ -129,6 +131,7 @@ class DataGenConfig:
         return {
             "single_tool": int(total * self.single_tool_ratio),
             "clarification": int(edge_total * self.clarification_ratio),
+            "follow_up": int(edge_total * self.follow_up_ratio),
             "refusal": int(edge_total * self.refusal_ratio),
             "casual": int(edge_total * self.casual_ratio),
             "total": total,
@@ -169,7 +172,7 @@ class DataGenerator:
             self.tool_map[name.lower().replace("-", "_")] = name
         
         # Stats
-        self.stats = {"api_calls": 0, "examples": 0, "failed": 0}
+        self.stats = {"api_calls": 0, "examples_generated": 0, "failed": 0}
         self.client = None
     
     def generate(self) -> dict:
@@ -182,7 +185,8 @@ class DataGenerator:
         print(f"Tools: {len(self.tools)}")
         print(f"Total examples: {targets['total']}")
         print(f"  - Single-tool: {targets['single_tool']} (75%)")
-        print(f"  - Clarification: {targets['clarification']} (15%)")
+        print(f"  - Clarification: {targets['clarification']} (10%)")
+        print(f"  - Follow-up: {targets['follow_up']} (5%)")
         print(f"  - Refusal: {targets['refusal']} (5%)")
         print(f"  - Casual: {targets['casual']} (5%)")
         print(f"{'='*50}\n")
@@ -195,6 +199,10 @@ class DataGenerator:
         print("🤔 Generating clarification examples...")
         clarification_examples = self._generate_clarification(targets['clarification'])
         print(f"   ✅ {len(clarification_examples)} examples\n")
+        
+        print("🔄 Generating follow-up examples...")
+        follow_up_examples = self._generate_follow_up(targets['follow_up'])
+        print(f"   ✅ {len(follow_up_examples)} examples\n")
         
         print("🚫 Generating refusal examples...")
         refusal_examples = self._generate_refusal(targets['refusal'])
@@ -210,6 +218,8 @@ class DataGenerator:
             all_examples.append(self._to_chat_format(ex, "tool_call"))
         for ex in clarification_examples:
             all_examples.append(self._to_chat_format(ex, "clarification"))
+        for ex in follow_up_examples:
+            all_examples.append(self._to_chat_format(ex, "follow_up"))
         for ex in refusal_examples:
             all_examples.append(self._to_chat_format(ex, "refusal"))
         for ex in casual_examples:
@@ -218,6 +228,9 @@ class DataGenerator:
         # Shuffle and split
         random.shuffle(all_examples)
         datasets = self._split(all_examples)
+        
+        # Update stats with total generated
+        self.stats["examples_generated"] = len(all_examples)
         
         print(f"{'='*50}")
         print(f"📊 Generation Complete!")
@@ -270,21 +283,39 @@ class DataGenerator:
 
 Context: {self.problem_statement}
 
-TOOLS (use EXACT names):
+TOOLS (use EXACT names and correct TYPES):
 {tools_desc}
 
-RULES:
+CRITICAL - ENUM VALUES ARE CASE-SENSITIVE:
+- If a param shows enum(OPEN|CLOSED), you MUST use "OPEN" or "CLOSED" exactly (uppercase)
+- Do NOT use lowercase like "open" or "closed" - the API will reject it
+- Always copy enum values EXACTLY as shown in the param list above
+
+CRITICAL RULES:
 1. Tool name must be EXACTLY from the list above
-2. Use REAL values, not placeholders like {{date}}, <NAME>, [USER]
-3. Include all required parameters
-4. Mix short queries ("list my repos") and longer ones ("can you show me all repositories I own?")
+2. The USER QUERY must CONTAIN all required parameter values explicitly
+3. DO NOT make up/hallucinate values that the user didn't provide!
+4. TYPES ARE CRITICAL:
+   - array params MUST use [...] syntax: "labels": ["bug", "urgent"]
+   - number params MUST NOT be quoted: "limit": 10 (NOT "limit": "10")
+   - boolean params use true/false: "active": true
+
+GOOD examples (user provides all info):
+- "Create issue in facebook/react titled 'Bug in hooks'" → owner=facebook, repo=react, title=Bug in hooks ✓
+- "List open issues in kubernetes/kubernetes with bug label" → all params from query ✓
+- "Send 'Deploy complete' to channel C123456" → channel and message from query ✓
+
+BAD examples (DO NOT generate these - info is missing):
+- "Create an issue about the bug" → NO owner/repo specified! ✗
+- "Comment on issue 73" → NO owner/repo specified! ✗
+- "Send a message to the team" → NO channel specified! ✗
 
 Output JSON array:
 [
-  {{"query": "user request", "tool": "exact_tool_name", "parameters": {{"param": "value"}}}}
+  {{"query": "user request with ALL required info", "tool": "exact_tool_name", "parameters": {{"param": "value_from_query"}}}}
 ]
 
-Generate {self.config.batch_size} diverse examples:"""
+Generate {self.config.batch_size} diverse examples where the user query contains ALL required information:"""
 
         return self._call_llm(prompt)
     
@@ -331,6 +362,72 @@ Output JSON array:
 ]
 
 Generate {self.config.batch_size} diverse clarification examples:"""
+
+        return self._call_llm(prompt)
+    
+    # =========================================================================
+    # Follow-up Generation (context-aware queries)
+    # =========================================================================
+    
+    def _generate_follow_up(self, target: int) -> list:
+        """
+        Generate examples where user asks a follow-up question with conversation context.
+        
+        These teach the model to:
+        1. Parse injected conversation context
+        2. Carry forward relevant parameters (owner, repo, etc.)
+        3. Apply new filters based on the follow-up query
+        """
+        examples = []
+        
+        while len(examples) < target:
+            # Pick random tools that have modifiable params
+            batch_tools = random.sample(self.tools, min(5, len(self.tools)))
+            batch = self._call_llm_follow_up(batch_tools)
+            examples.extend(batch)
+        
+        return examples[:target]
+    
+    def _call_llm_follow_up(self, tools: list) -> list:
+        """Generate follow-up examples with conversation context."""
+        tools_desc = self._format_tools_with_required(tools)
+        
+        prompt = f"""Generate follow-up query training examples for a conversational agent.
+
+TOOLS AVAILABLE:
+{tools_desc}
+
+SCENARIO: The user previously asked a question, got a response, and now asks a SHORT follow-up
+that references the previous context. The follow-up query should be BRIEF (like real users).
+
+FORMAT - The query MUST include conversation context in this EXACT format:
+[Conversation Context]
+User asked: <previous query>
+Agent called <tool_name> -> <brief result summary>
+[Current Query]
+<short follow-up question>
+
+EXAMPLES OF GOOD FOLLOW-UP PATTERNS:
+1. "what about the open ones" (filter change)
+2. "show me just 5" (limit change)  
+3. "same but for the other repo" (param swap)
+4. "any from last week?" (time filter)
+5. "what's the most recent?" (sort/limit)
+6. "now search in the body too" (param addition)
+
+OUTPUT FORMAT (JSON array):
+[
+  {{"query": "[Conversation Context]\\nUser asked: find issues in owner/repo\\nAgent called list_issues -> Found 5 issues: #1 Bug, #2 Feature...\\n[Current Query]\\nwhat about the open ones", "tool": "list_issues", "params": {{"owner": "owner", "repo": "repo", "state": "OPEN"}}}}
+]
+
+RULES:
+1. The follow-up query must be SHORT and natural (3-8 words)
+2. Carry forward ALL relevant params from the previous query
+3. Apply the modification from the follow-up (filter, limit, sort, etc.)
+4. Use EXACT tool names and valid param values from the list above
+5. ENUM VALUES ARE CASE-SENSITIVE: Use "OPEN"/"CLOSED" exactly as shown, NOT lowercase
+
+Generate {self.config.batch_size} diverse follow-up examples:"""
 
         return self._call_llm(prompt)
     
@@ -390,26 +487,51 @@ Generate {self.config.batch_size} diverse refusal examples:"""
         return examples[:target]
     
     def _call_llm_casual(self) -> list:
-        """Generate casual conversation - greetings, thanks, etc."""
-        prompt = f"""Generate {self.config.batch_size} casual conversation examples that don't need any tool.
+        """Generate casual conversation - greetings, capability questions, thanks, etc."""
+        
+        # Get tool names for capability descriptions
+        tool_names = [t.name for t in self.tools]
+        tool_list = ", ".join(tool_names[:5]) + ("..." if len(tool_names) > 5 else "")
+        
+        prompt = f"""Generate {self.config.batch_size} casual conversation examples that DON'T need any tool call.
 
-PATTERN:
-1. User sends a casual/social message
-2. Assistant responds warmly and offers help
+The agent has these tools: {tool_list}
 
-EXAMPLES:
-- User: "Hey!" → "Hey there! How can I help you today?"
-- User: "Thanks!" → "You're welcome! Let me know if you need anything else."
-- User: "Perfect, that's exactly what I needed" → "Glad I could help! 😊"
-- User: "Good morning" → "Good morning! What can I help you with?"
-- User: "lol that's funny" → "Haha, glad you liked it! Anything else I can help with?"
+CRITICAL: These are messages where the user is NOT asking to DO something.
+The assistant should respond with friendly text, NO tool calls.
+
+CATEGORIES TO COVER (mix all types):
+
+1. GREETINGS:
+   - "Hey!" → "Hey there! How can I help you today?"
+   - "Good morning" → "Good morning! What can I help you with?"
+   - "hi" → "Hi! What can I do for you?"
+
+2. THANKS:
+   - "Thanks!" → "You're welcome! Let me know if you need anything else."
+   - "That was helpful" → "Glad I could help! Anything else?"
+   - "perfect" → "Great! Let me know if you need anything else."
+
+3. CAPABILITY QUESTIONS:
+   - "What can you do?" → "I can help with GitHub issues and Slack. I can list issues, create them, add comments, and send Slack messages. What would you like me to do?"
+   - "What are you?" → "I'm an assistant that helps manage GitHub issues and Slack messages."
+   - "help" → "I'm here to help! I can work with GitHub issues and Slack. What do you need?"
+
+4. ACKNOWLEDGMENTS:
+   - "ok" → "Got it! Let me know when you need something."
+   - "I see" → "Yep! Anything else?"
+   - "cool" → "Glad that works! What's next?"
+
+5. CONFUSION:
+   - "I don't understand" → "No problem! What would you like me to explain?"
+   - "wait what" → "Sorry if I was unclear. How can I help?"
 
 Output JSON array:
 [
   {{"query": "casual message", "response": "friendly response"}}
 ]
 
-Generate {self.config.batch_size} diverse casual examples (greetings, thanks, reactions):"""
+Generate {self.config.batch_size} DIVERSE examples from ALL categories:"""
 
         return self._call_llm(prompt)
     
@@ -495,7 +617,7 @@ Generate {self.config.batch_size} diverse casual examples (greetings, thanks, re
             return []
     
     def _validate_example(self, ex: dict) -> bool:
-        """Validate and fix example."""
+        """Validate and fix example, including type coercion."""
         # Skip placeholders
         if self._has_placeholder(str(ex)):
             return False
@@ -507,16 +629,129 @@ Generate {self.config.batch_size} diverse casual examples (greetings, thanks, re
         # Fix tool name if needed
         tool = ex.get('tool')
         if tool:
+            actual_tool = None
             if tool in self.tool_names:
-                return True
-            # Try normalized
-            normalized = tool.lower().replace("-", "_")
-            if normalized in self.tool_map:
-                ex['tool'] = self.tool_map[normalized]
-                return True
-            return False
+                actual_tool = tool
+            else:
+                # Try normalized
+                normalized = tool.lower().replace("-", "_")
+                if normalized in self.tool_map:
+                    ex['tool'] = self.tool_map[normalized]
+                    actual_tool = self.tool_map[normalized]
+            
+            if not actual_tool:
+                return False
+            
+            # Fix parameter types based on schema
+            params = ex.get('parameters', {})
+            if params:
+                self._fix_param_types(actual_tool, params)
+            
+            return True
         
         return True
+    
+    def _fix_param_types(self, tool_name: str, params: dict):
+        """
+        Coerce parameter values to correct types based on tool schema.
+        
+        Common LLM mistakes:
+        - "10" instead of 10 (number)
+        - "bug" instead of ["bug"] (array)
+        - "true" instead of true (boolean)
+        - null for optional params (remove them)
+        """
+        # Find the tool schema
+        tool_schema = None
+        for t in self.tools:
+            name = self._get_name(t)
+            if name == tool_name:
+                tool_schema = t
+                break
+        
+        if not tool_schema:
+            return
+        
+        schema_params = self._get_params(tool_schema)
+        required_params = set(self._get_required(tool_schema))
+        
+        # First pass: remove None values for optional params
+        params_to_remove = []
+        for param_name, value in params.items():
+            if value is None and param_name not in required_params:
+                params_to_remove.append(param_name)
+        for param_name in params_to_remove:
+            del params[param_name]
+        
+        # Second pass: fix types
+        for param_name, value in list(params.items()):
+            if param_name not in schema_params:
+                continue
+            
+            param_info = schema_params[param_name]
+            if not isinstance(param_info, dict):
+                continue
+            
+            expected_type = param_info.get('type', 'string')
+            
+            # Handle None for required params - use default or empty value
+            if value is None:
+                if expected_type == 'array':
+                    params[param_name] = []
+                elif expected_type in ('number', 'integer'):
+                    params[param_name] = 0
+                elif expected_type == 'boolean':
+                    params[param_name] = False
+                elif expected_type == 'string':
+                    params[param_name] = ""
+                continue
+            
+            # Fix array: "bug" -> ["bug"], "bug,feature" -> ["bug", "feature"]
+            if expected_type == 'array':
+                if isinstance(value, str):
+                    if ',' in value:
+                        params[param_name] = [v.strip() for v in value.split(',')]
+                    else:
+                        params[param_name] = [value] if value else []
+                elif not isinstance(value, list):
+                    # Convert any other type to single-element array
+                    params[param_name] = [value] if value else []
+            
+            # Fix number/integer: "10" -> 10
+            elif expected_type in ('number', 'integer'):
+                if isinstance(value, str):
+                    try:
+                        if '.' in value:
+                            params[param_name] = float(value)
+                        else:
+                            params[param_name] = int(value)
+                    except ValueError:
+                        params[param_name] = 0
+                elif isinstance(value, bool):
+                    # bool is subclass of int, convert explicitly
+                    params[param_name] = 1 if value else 0
+            
+            # Fix boolean: "true" -> True, "false" -> False
+            elif expected_type == 'boolean':
+                if isinstance(value, str):
+                    params[param_name] = value.lower() in ('true', 'yes', '1')
+                elif isinstance(value, (int, float)):
+                    params[param_name] = bool(value)
+            
+            # Fix string: convert non-strings to strings
+            elif expected_type == 'string' and not isinstance(value, str):
+                if value is not None:
+                    params[param_name] = str(value)
+            
+            # Fix enum values: case-sensitive matching
+            # If schema has enum, find the correct case version
+            enum_values = param_info.get('enum')
+            if enum_values and isinstance(value, str):
+                # Build case-insensitive lookup
+                enum_map = {str(v).lower(): v for v in enum_values}
+                value_lower = value.lower()
+                if value_lower in enum_map:
+                    params[param_name] = enum_map[value_lower]
     
     def _has_placeholder(self, text: str) -> bool:
         """Check for placeholder patterns."""
@@ -550,10 +785,11 @@ Generate {self.config.batch_size} diverse casual examples (greetings, thanks, re
         messages.append({"role": "user", "content": example.get("query", "")})
         
         # Assistant response
-        if example_type == "tool_call":
+        if example_type in ("tool_call", "follow_up"):
             # Tool call + result + final response
+            # follow_up is the same as tool_call but with context in the query
             tool = example.get("tool")
-            params = example.get("parameters", {})
+            params = example.get("parameters", example.get("params", {}))
             
             tool_json = json.dumps({"tool": tool, "parameters": params})
             messages.append({
@@ -712,13 +948,40 @@ Generate {self.config.batch_size} diverse casual examples (greetings, thanks, re
         return getattr(tool, 'required_params', [])
     
     def _format_tools(self, tools: list) -> str:
-        """Format tools for prompt."""
+        """Format tools for prompt with parameter types."""
         lines = []
         for t in tools:
             name = self._get_name(t)
             desc = t.get('description', '') if isinstance(t, dict) else getattr(t, 'description', '')
             params = self._get_params(t)
-            param_str = ", ".join(params.keys()) if params else "none"
+            
+            # Include type info so LLM generates correct types
+            if params:
+                param_parts = []
+                for pname, pinfo in params.items():
+                    if isinstance(pinfo, dict):
+                        ptype = pinfo.get('type', 'string')
+                        enum_values = pinfo.get('enum')
+                        
+                        # If enum is defined, show allowed values (CRITICAL for APIs)
+                        if enum_values:
+                            enum_str = "|".join(str(v) for v in enum_values[:4])  # Show up to 4 values
+                            param_parts.append(f"{pname}:enum({enum_str})")
+                        # Make types explicit for common mistakes
+                        elif ptype == 'array':
+                            param_parts.append(f"{pname}:array(use [...])")
+                        elif ptype in ('number', 'integer'):
+                            param_parts.append(f"{pname}:number(no quotes)")
+                        elif ptype == 'boolean':
+                            param_parts.append(f"{pname}:boolean(true/false)")
+                        else:
+                            param_parts.append(f"{pname}:string")
+                    else:
+                        param_parts.append(pname)
+                param_str = ", ".join(param_parts)
+            else:
+                param_str = "none"
+            
             lines.append(f"• {name}: {desc}\n  Params: {param_str}")
         return "\n".join(lines)
     
@@ -862,7 +1125,8 @@ def recommend_dataset_size(num_tools: int) -> dict:
             "total": targets['total'],
             "breakdown": {
                 "single_tool (75%)": targets['single_tool'],
-                "clarification (15%)": targets['clarification'],
+                "clarification (10%)": targets['clarification'],
+                "follow_up (5%)": targets['follow_up'],
                 "refusal (5%)": targets['refusal'],
                 "casual (5%)": targets['casual'],
             },
@@ -899,7 +1163,8 @@ def print_dataset_recommendation(num_tools: int):
     print("USING SUGGESTED:")
     print(f"  Total: {targets['total']}")
     print(f"    - Single-tool (75%):   {targets['single_tool']}")
-    print(f"    - Clarification (15%): {targets['clarification']}")
+    print(f"    - Clarification (10%): {targets['clarification']}")
+    print(f"    - Follow-up (5%):      {targets['follow_up']}")
     print(f"    - Refusal (5%):        {targets['refusal']}")
     print(f"    - Casual (5%):         {targets['casual']}")
     print()

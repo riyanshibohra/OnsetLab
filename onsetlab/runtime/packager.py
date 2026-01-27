@@ -211,35 +211,97 @@ class AgentPackager:
             server_tools = server_dict.get("tools", [])
             docker_image = server_dict.get("docker_image", "")
             
+            # Handle package - can be string or dict (from registry)
+            package_raw = server_dict.get("package", "")
+            if isinstance(package_raw, dict):
+                # Registry format: extract npm package name or github_repo
+                # For binary servers, use command name as npm package (e.g., "slack-mcp-server")
+                package = package_raw.get("command", package_raw.get("github_repo", ""))
+                # If command has a path, just use the basename
+                if "/" in package:
+                    package = package.split("/")[-1]
+            else:
+                package = package_raw
+            
             # Handle both env_vars (list) and env_var (single)
             env_vars = server_dict.get("env_vars", [])
             if not env_vars and server_dict.get("env_var"):
                 env_vars = [server_dict.get("env_var")]
+            
+            # If still empty, use common defaults based on server name
+            # These MUST match the actual server requirements
+            if not env_vars:
+                env_var_defaults = {
+                    "github": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+                    "slack": ["SLACK_MCP_XOXP_TOKEN", "SLACK_MCP_ADD_MESSAGE_TOOL"],  # korotovsky/slack-mcp-server
+                    "notion": ["NOTION_TOKEN"],  # @notionhq/notion-mcp-server
+                    "google_calendar": ["CREDENTIALS_PATH"],  # mcp-google-calendar
+                    "calendar": ["CREDENTIALS_PATH"],
+                    "tavily": ["TAVILY_API_KEY"],
+                    "filesystem": [],  # No auth needed
+                    "memory": [],  # Built-in, no auth
+                }
+                env_vars = env_var_defaults.get(name.lower(), [])
             
             # Build env dict with ALL required env vars
             env_dict = {}
             for ev in env_vars:
                 env_dict[ev] = f"${{{ev}}}"
             
-            server_config = {
-                "command": command,
-                "args": args,
-                "env": env_dict,
-                "tools": server_tools,
-                "server_type": server_type,  # Include for runtime awareness
-            }
-            
-            # Add Docker-specific config
-            if server_type in ("docker", "go", "python"):
-                server_config["docker_image"] = docker_image
-                # For Docker, run the container directly with the MCP server
-                server_config["command"] = "docker"
-                # Use 'docker run' with env vars passed through
-                docker_args = ["run", "-i", "--rm"]
+            # Handle different server types
+            if server_type in ("docker", "go", "python") and docker_image:
+                # Docker-based servers - always pull latest to avoid stale cached images
+                # Append :latest tag if no tag specified
+                if ":" not in docker_image:
+                    docker_image = f"{docker_image}:latest"
+                
+                docker_args = ["run", "--pull", "always", "-i", "--rm"]
                 for ev in env_vars:
                     docker_args.extend(["-e", ev])
                 docker_args.append(docker_image)
-                server_config["args"] = docker_args
+                
+                server_config = {
+                    "command": "docker",
+                    "args": docker_args,
+                    "env": env_dict,
+                    "tools": server_tools,
+                    "server_type": server_type,
+                    "docker_image": docker_image,
+                }
+            elif server_type == "binary":
+                # Binary servers - check if there's a specific command, else try npx
+                # Most modern MCP servers publish to npm even if they're binaries
+                if package and not command.startswith("/"):
+                    # Use npx to run the package
+                    server_config = {
+                        "command": "npx",
+                        "args": ["-y", package, "--transport", "stdio"],
+                        "env": env_dict,
+                        "tools": server_tools,
+                        "server_type": server_type,
+                    }
+                else:
+                    # Direct binary path provided
+                    server_config = {
+                        "command": command,
+                        "args": args if args else ["--transport", "stdio"],
+                        "env": env_dict,
+                        "tools": server_tools,
+                        "server_type": server_type,
+                    }
+            else:
+                # NPM-based servers (most common)
+                # Ensure args are set correctly for npx
+                if not args and package:
+                    args = ["-y", package]
+                
+                server_config = {
+                    "command": command or "npx",
+                    "args": args,
+                    "env": env_dict,
+                    "tools": server_tools,
+                    "server_type": server_type,
+                }
             
             config["mcpServers"][name] = server_config
             
@@ -268,9 +330,42 @@ class AgentPackager:
             config["api_tools"].extend(server_tools)
         
         # Collect all allowed tools (only tools we trained on)
+        all_tool_names = []
         for tool in self.tools:
             tool_dict = tool.to_dict() if hasattr(tool, 'to_dict') else tool
-            config["allowed_tools"].append(tool_dict.get("name", ""))
+            tool_name = tool_dict.get("name", "")
+            config["allowed_tools"].append(tool_name)
+            all_tool_names.append(tool_name)
+        
+        # If mcp_tools is empty but we have MCP servers, assign all tools to MCP
+        # This handles the case where MCPServerConfig.tools wasn't populated
+        if not config["mcp_tools"] and self.mcp_servers:
+            config["mcp_tools"] = all_tool_names
+            
+            # Also update each server's tools list for proper routing
+            # Distribute tools evenly if multiple servers, or all to first
+            if len(self.mcp_servers) == 1:
+                # Single server gets all tools
+                server_name = list(config["mcpServers"].keys())[0]
+                config["mcpServers"][server_name]["tools"] = all_tool_names
+            else:
+                # Multiple servers - try to match by name patterns
+                # e.g., "list_issues" -> "github" server, "channels_list" -> "slack" server
+                for server_name in config["mcpServers"]:
+                    server_tools = []
+                    for tool_name in all_tool_names:
+                        # Match by common patterns
+                        if server_name.lower() in tool_name.lower():
+                            server_tools.append(tool_name)
+                        elif server_name == "github" and any(x in tool_name for x in ["issue", "repo", "pull", "commit", "branch"]):
+                            server_tools.append(tool_name)
+                        elif server_name == "slack" and any(x in tool_name for x in ["channel", "message", "conversation", "user"]):
+                            server_tools.append(tool_name)
+                        elif server_name == "memory" and "memory" in tool_name:
+                            server_tools.append(tool_name)
+                    
+                    if server_tools:
+                        config["mcpServers"][server_name]["tools"] = server_tools
         
         path = os.path.join(output_dir, "mcp_config.json")
         with open(path, "w") as f:
