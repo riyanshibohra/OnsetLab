@@ -17,25 +17,52 @@ from pathlib import Path
 # Model Configuration
 # =============================================================================
 # Supported models for tool-calling fine-tuning.
-# Qwen2.5-7B recommended for production, 3B for quick testing.
+# 
+# ToolLLaMA: Pre-trained on 16K+ APIs (ToolBench), already knows tool patterns
+# NexusRaven: Optimized for function calling, surpasses GPT-4 on benchmarks
+# Qwen: General purpose, needs more training data for tools
 #
 SUPPORTED_MODELS = {
+    # RECOMMENDED: Pre-trained on tool calling
+    "toolllama-7b": {
+        "name": "ToolLLaMA-2-7b-v2",
+        "unsloth_id": "ToolBench/ToolLLaMA-2-7b-v2",
+        "hf_id": "ToolBench/ToolLLaMA-2-7b-v2",
+        "size": "7B",
+        "context_length": 4096,
+        "tool_format": "toolllama",  # Uses ToolBench format
+        "pretrained_on_tools": True,
+    },
+    "nexusraven-13b": {
+        "name": "NexusRaven-V2-13B",
+        "unsloth_id": "Nexusflow/NexusRaven-V2-13B",
+        "hf_id": "Nexusflow/NexusRaven-V2-13B",
+        "size": "13B",
+        "context_length": 16384,
+        "tool_format": "nexusraven",  # Uses Python function signatures
+        "pretrained_on_tools": True,
+    },
+    # General purpose (need more training data)
     "qwen2.5-3b": {
         "name": "Qwen2.5-3B-Instruct",
         "unsloth_id": "unsloth/Qwen2.5-3B-Instruct-bnb-4bit",
         "size": "3B",
         "context_length": 32768,
+        "tool_format": "qwen",
+        "pretrained_on_tools": False,
     },
     "qwen2.5-7b": {
         "name": "Qwen2.5-7B-Instruct",
         "unsloth_id": "unsloth/Qwen2.5-7B-Instruct-bnb-4bit",
         "size": "7B",
         "context_length": 131072,
+        "tool_format": "qwen",
+        "pretrained_on_tools": False,
     },
 }
 
-# Default to 7B for better tool-calling performance
-DEFAULT_MODEL = "qwen2.5-7b"
+# Default to ToolLLaMA - pre-trained on tool calling
+DEFAULT_MODEL = "toolllama-7b"
 MODEL_CONFIG = SUPPORTED_MODELS[DEFAULT_MODEL]
 
 
@@ -280,7 +307,9 @@ class UnslothTrainer:
     
     def load_model(self, num_examples: int = None, num_tools: int = None):
         """
-        Load the base model with Unsloth.
+        Load the base model.
+        
+        Uses Unsloth for optimized models (unsloth/*), standard transformers for others.
         
         Args:
             num_examples: If provided, auto-adjusts LoRA params based on dataset size
@@ -289,6 +318,34 @@ class UnslothTrainer:
         if not self.has_gpu:
             raise RuntimeError("GPU required for training. Please run in Colab.")
         
+        # Ensure LoRA config is set
+        if self.config.lora_rank is None or self.config.lora_alpha is None:
+            if num_examples:
+                self.config.auto_adjust_for_dataset(num_examples, num_tools)
+            else:
+                if self.config.lora_rank is None:
+                    self.config.lora_rank = 16
+                if self.config.lora_alpha is None:
+                    self.config.lora_alpha = 16
+        
+        model_id = self.config.get_model_id()
+        print(f"🔄 Loading model: {model_id}")
+        
+        # Check if this is an Unsloth-optimized model
+        is_unsloth_model = model_id.startswith("unsloth/")
+        
+        if is_unsloth_model:
+            # Use Unsloth's FastLanguageModel for optimized loading
+            self._load_with_unsloth(model_id)
+        else:
+            # Use standard transformers + PEFT for other models (like ToolLLaMA)
+            self._load_with_transformers(model_id)
+        
+        print("✅ Model loaded with LoRA")
+        return self.model, self.tokenizer
+    
+    def _load_with_unsloth(self, model_id: str):
+        """Load model using Unsloth's optimized loader."""
         try:
             from unsloth import FastLanguageModel
         except ImportError:
@@ -298,29 +355,13 @@ class UnslothTrainer:
                 "Or run in Google Colab with GPU."
             )
         
-        # Ensure LoRA config is set (should already be done by train())
-        # This handles the case where load_model() is called directly
-        if self.config.lora_rank is None or self.config.lora_alpha is None:
-            if num_examples:
-                self.config.auto_adjust_for_dataset(num_examples, num_tools)
-            else:
-                # Use safe defaults if not auto-adjusted
-                if self.config.lora_rank is None:
-                    self.config.lora_rank = 16
-                if self.config.lora_alpha is None:
-                    self.config.lora_alpha = 16
-        
-        model_id = self.config.get_model_id()
-        print(f"🔄 Loading model: {model_id}")
-        
         self.model, self.tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_id,
             max_seq_length=self.config.max_seq_length,
-            dtype=None,  # Auto-detect
+            dtype=None,
             load_in_4bit=True,
         )
         
-        # Apply LoRA
         print(f"🔧 Applying LoRA adapters (rank={self.config.lora_rank}, alpha={self.config.lora_alpha})...")
         self.model = FastLanguageModel.get_peft_model(
             self.model,
@@ -332,28 +373,71 @@ class UnslothTrainer:
             use_gradient_checkpointing="unsloth",
             random_state=42,
         )
+        self._use_unsloth = True
+    
+    def _load_with_transformers(self, model_id: str):
+        """Load model using standard transformers + PEFT (for non-Unsloth models like ToolLLaMA)."""
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+        from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
         
-        print("✅ Model loaded with LoRA")
-        return self.model, self.tokenizer
+        print(f"   Using standard transformers loading for {model_id}")
+        
+        # Configure 4-bit quantization
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+        
+        # Load tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = "right"  # Required for causal LM training
+        
+        # Set chat template for LLaMA-2 models (they don't have one by default)
+        if self.tokenizer.chat_template is None:
+            print("   Setting LLaMA-2 chat template...")
+            # Flexible LLaMA-2 chat template (no strict alternation - works with Observation messages)
+            self.tokenizer.chat_template = """{% if messages[0]['role'] == 'system' %}{% set system_message = messages[0]['content'] %}{% set loop_messages = messages[1:] %}{% else %}{% set system_message = '' %}{% set loop_messages = messages %}{% endif %}{% if system_message %}{{ bos_token + '[INST] <<SYS>>\\n' + system_message + '\\n<</SYS>>\\n\\n' }}{% endif %}{% for message in loop_messages %}{% if message['role'] == 'user' %}{% if loop.index0 == 0 and system_message %}{{ message['content'].strip() + ' [/INST]' }}{% else %}{{ '[INST] ' + message['content'].strip() + ' [/INST]' }}{% endif %}{% elif message['role'] == 'assistant' %}{{ ' ' + message['content'].strip() + ' ' + eos_token }}{% endif %}{% endfor %}"""
+        
+        # Load model with quantization
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            quantization_config=bnb_config,
+            device_map="auto",
+            trust_remote_code=True,
+            torch_dtype=torch.float16,
+        )
+        
+        # Prepare for k-bit training
+        self.model = prepare_model_for_kbit_training(self.model)
+        
+        # Configure LoRA
+        lora_config = LoraConfig(
+            r=self.config.lora_rank,
+            lora_alpha=self.config.lora_alpha,
+            lora_dropout=self.config.lora_dropout,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            bias="none",
+            task_type="CAUSAL_LM",
+        )
+        
+        print(f"🔧 Applying LoRA adapters (rank={self.config.lora_rank}, alpha={self.config.lora_alpha})...")
+        self.model = get_peft_model(self.model, lora_config)
+        self.model.print_trainable_parameters()
+        self._use_unsloth = False
     
     def train(self):
-        """Run the fine-tuning process using Unsloth's recommended pattern."""
+        """Run the fine-tuning process."""
         # Disable Weights & Biases prompting
         import os
+        import torch
         os.environ["WANDB_DISABLED"] = "true"
         
-        from unsloth import is_bfloat16_supported
         from datasets import Dataset
-        
-        # Handle different trl versions - try newer API first
-        try:
-            from trl import SFTTrainer, SFTConfig
-            use_sft_config = True
-        except ImportError:
-            from trl import SFTTrainer
-            from transformers import TrainingArguments
-            use_sft_config = False
-            print("   ⚠️ Using older trl API (TrainingArguments)")
         
         # Load training data FIRST (need size for auto-adjustment)
         train_examples = self._load_training_data()
@@ -406,81 +490,65 @@ class UnslothTrainer:
         if self.config.learning_rate is None:
             self.config.learning_rate = 2e-4  # Safe default
         
-        # Unsloth's recommended trainer setup
-        print("🚀 Starting training (with validation)...")
+        # Check for bfloat16 support
+        def check_bf16_support():
+            """Check if GPU supports bfloat16."""
+            if not torch.cuda.is_available():
+                return False
+            # Check compute capability (Ampere+ GPUs support bf16)
+            major, _ = torch.cuda.get_device_capability()
+            return major >= 8  # Ampere (A100, etc.) and newer
         
-        if use_sft_config:
-            # New trl API (v0.8+): Use SFTConfig
-            sft_config = SFTConfig(
-                # Training settings
-                output_dir=self.config.output_dir,
-                num_train_epochs=self.config.epochs,
-                per_device_train_batch_size=self.config.batch_size,
-                per_device_eval_batch_size=self.config.batch_size,
-                gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-                learning_rate=self.config.learning_rate,
-                warmup_ratio=self.config.warmup_ratio,
-                weight_decay=self.config.weight_decay,
-                logging_steps=10,
-                save_strategy="epoch",
-                eval_strategy="epoch",
-                fp16=not is_bfloat16_supported(),
-                bf16=is_bfloat16_supported(),
-                optim="adamw_8bit",
-                seed=42,
-                report_to="none",
-                load_best_model_at_end=True,
-                metric_for_best_model="eval_loss",
-                greater_is_better=False,
-                # SFT-specific settings
-                max_seq_length=self.config.max_seq_length,
-                dataset_text_field="text",  # Use column name, more reliable
-                dataset_num_proc=2,
-                packing=False,
+        use_bf16 = check_bf16_support()
+        
+        print("🚀 Starting training (with validation)...")
+        print(f"   Using {'bf16' if use_bf16 else 'fp16'} precision")
+        
+        # Use standard Trainer (stable API, no SFTTrainer compatibility issues)
+        from transformers import TrainingArguments, Trainer, DataCollatorForLanguageModeling
+        
+        # Tokenize the datasets
+        def tokenize_function(examples):
+            return self.tokenizer(
+                examples["text"], 
+                truncation=True, 
+                max_length=self.config.max_seq_length, 
+                padding="max_length"
             )
-            
-            self.trainer = SFTTrainer(
-                model=self.model,
-                tokenizer=self.tokenizer,  # Works in both old and new trl
-                train_dataset=train_dataset,
-                eval_dataset=val_dataset,
-                args=sft_config,
-            )
-        else:
-            # Old trl API: Use TrainingArguments + direct params
-            training_args = TrainingArguments(
-                output_dir=self.config.output_dir,
-                num_train_epochs=self.config.epochs,
-                per_device_train_batch_size=self.config.batch_size,
-                per_device_eval_batch_size=self.config.batch_size,
-                gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-                learning_rate=self.config.learning_rate,
-                warmup_ratio=self.config.warmup_ratio,
-                weight_decay=self.config.weight_decay,
-                logging_steps=10,
-                save_strategy="epoch",
-                evaluation_strategy="epoch",  # Old API uses evaluation_strategy
-                fp16=not is_bfloat16_supported(),
-                bf16=is_bfloat16_supported(),
-                optim="adamw_8bit",
-                seed=42,
-                report_to="none",
-                load_best_model_at_end=True,
-                metric_for_best_model="eval_loss",
-                greater_is_better=False,
-            )
-            
-            self.trainer = SFTTrainer(
-                model=self.model,
-                tokenizer=self.tokenizer,
-                train_dataset=train_dataset,
-                eval_dataset=val_dataset,
-                dataset_text_field="text",
-                max_seq_length=self.config.max_seq_length,
-                dataset_num_proc=2,
-                packing=False,
-                args=training_args,
-            )
+        
+        print("   Tokenizing datasets...")
+        train_dataset = train_dataset.map(tokenize_function, batched=True, remove_columns=["text"])
+        val_dataset = val_dataset.map(tokenize_function, batched=True, remove_columns=["text"])
+        
+        training_args = TrainingArguments(
+            output_dir=self.config.output_dir,
+            num_train_epochs=self.config.epochs,
+            per_device_train_batch_size=self.config.batch_size,
+            per_device_eval_batch_size=self.config.batch_size,
+            gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+            learning_rate=self.config.learning_rate,
+            warmup_ratio=self.config.warmup_ratio,
+            weight_decay=self.config.weight_decay,
+            logging_steps=10,
+            save_strategy="epoch",
+            eval_strategy="epoch",  # New API name
+            fp16=not use_bf16,
+            bf16=use_bf16,
+            optim="adamw_8bit",
+            seed=42,
+            report_to="none",
+            load_best_model_at_end=True,
+            metric_for_best_model="eval_loss",
+            greater_is_better=False,
+        )
+        
+        self.trainer = Trainer(
+            model=self.model,
+            args=training_args,
+            train_dataset=train_dataset,
+            eval_dataset=val_dataset,
+            data_collator=DataCollatorForLanguageModeling(self.tokenizer, mlm=False),
+        )
         
         # Train!
         train_result = self.trainer.train()

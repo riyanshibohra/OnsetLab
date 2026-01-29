@@ -2,6 +2,7 @@ specs/
 run_pipeline.py
 colab_test.ipynb
 tests/
+test_xlam/
 # Python
 __pycache__/
 *.py[cod]

@@ -68,6 +68,12 @@ class DataGenConfig:
     openai_model: str = "gpt-4o"
     anthropic_model: str = "claude-sonnet-4-20250514"
     
+    # Tool call format (matches model type)
+    # - "qwen": <tool_call>{"tool": "...", "parameters": {...}}</tool_call>
+    # - "toolllama": Action: tool_name\nAction Input: {...}
+    # - "nexusraven": Call: function_name(param="value")
+    tool_format: str = "toolllama"    # Default to ToolLLaMA format
+    
     def calculate_total(self, num_tools: int, level: str = "suggested") -> int:
         """
         Calculate total examples based on number of tools.
@@ -784,6 +790,9 @@ Generate {self.config.batch_size} DIVERSE examples from ALL categories:"""
         # User message
         messages.append({"role": "user", "content": example.get("query", "")})
         
+        # Get tool format from config
+        tool_format = self.config.tool_format if self.config else "toolllama"
+        
         # Assistant response
         if example_type in ("tool_call", "follow_up"):
             # Tool call + result + final response
@@ -791,15 +800,33 @@ Generate {self.config.batch_size} DIVERSE examples from ALL categories:"""
             tool = example.get("tool")
             params = example.get("parameters", example.get("params", {}))
             
-            tool_json = json.dumps({"tool": tool, "parameters": params})
+            # Format tool call based on model type
+            if tool_format == "toolllama":
+                # ToolLLaMA format: Action: tool_name\nAction Input: {...}
+                params_json = json.dumps(params)
+                tool_call_str = f"Action: {tool}\nAction Input: {params_json}"
+            elif tool_format == "nexusraven":
+                # NexusRaven format: Call: func(param="value")
+                param_strs = [f'{k}="{v}"' if isinstance(v, str) else f'{k}={v}' for k, v in params.items()]
+                tool_call_str = f"Call: {tool}({', '.join(param_strs)})"
+            else:
+                # Qwen/default format: <tool_call>{"tool": ..., "parameters": ...}</tool_call>
+                tool_json = json.dumps({"tool": tool, "parameters": params})
+                tool_call_str = f"<tool_call>\n{tool_json}\n</tool_call>"
+            
             messages.append({
                 "role": "assistant",
-                "content": f"<tool_call>\n{tool_json}\n</tool_call>"
+                "content": tool_call_str
             })
             
             # Simulated result
             result = self._simulate_result(tool, params)
-            messages.append({"role": "tool", "content": result})
+            
+            # Format result based on model type
+            if tool_format == "toolllama":
+                messages.append({"role": "user", "content": f"Observation: {result}"})
+            else:
+                messages.append({"role": "tool", "content": result})
             
             # Final response
             response = self._generate_response(tool, params, result)

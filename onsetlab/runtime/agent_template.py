@@ -686,27 +686,127 @@ def load_model():
     return model
 
 
-def generate_response(model, messages: list) -> str:
-    """Generate a response using the model."""
-    # Format for Qwen chat template
-    prompt = ""
-    for msg in messages:
-        role = msg["role"]
-        content = msg["content"]
-        if role == "system":
-            prompt += f"<|im_start|>system\n{content}<|im_end|>\n"
-        elif role == "user":
-            prompt += f"<|im_start|>user\n{content}<|im_end|>\n"
-        elif role == "assistant":
-            prompt += f"<|im_start|>assistant\n{content}<|im_end|>\n"
-        elif role == "tool":
-            prompt += f"<|im_start|>tool\n{content}<|im_end|>\n"
+def build_tool_grammar(tool_names: list) -> str:
+    """
+    Build a GBNF grammar that constrains output to valid tool calls.
     
-    prompt += "<|im_start|>assistant\n"
+    This prevents the model from hallucinating non-existent tools.
     
-    output = model(prompt, max_tokens=2048, temperature=0.3, stop=["<|im_end|>", "</tool_call>"])
+    Args:
+        tool_names: List of valid tool names
+    
+    Returns:
+        GBNF grammar string for llama.cpp
+    """
+    # Escape tool names for grammar
+    escaped_names = [f'"{name}"' for name in tool_names]
+    tool_names_rule = " | ".join(escaped_names)
+    
+    grammar = f'''
+root ::= response
+response ::= tool-call | text-response
+tool-call ::= "Action: " tool-name "\\nAction Input: " json-object
+tool-name ::= {tool_names_rule}
+text-response ::= [^{{}}]+
+json-object ::= "{{" ws members ws "}}"
+members ::= pair ("," ws pair)*
+pair ::= ws string ws ":" ws value
+string ::= "\\"" [a-zA-Z0-9_-]* "\\""
+value ::= string | number | "true" | "false" | "null" | json-object | array
+array ::= "[" ws (value ("," ws value)*)? ws "]"
+number ::= "-"? [0-9]+ ("." [0-9]+)?
+ws ::= [ \\t\\n]*
+'''
+    return grammar.strip()
+
+
+# Model format detection
+MODEL_FORMAT = "auto"  # Will be set based on model name
+
+
+def generate_response(model, messages: list, tool_names: list = None, model_format: str = "auto") -> str:
+    """
+    Generate a response using the model.
+    
+    Args:
+        model: The loaded llama.cpp model
+        messages: List of conversation messages
+        tool_names: Optional list of valid tool names for grammar constraints
+        model_format: One of "auto", "qwen", "toolllama", "llama"
+    
+    Returns:
+        Model response string
+    """
+    # Detect format from model if auto
+    if model_format == "auto":
+        # Default to ToolLLaMA format if available
+        model_format = "toolllama"
+    
+    # Format prompt based on model type
+    if model_format == "toolllama":
+        # LLaMA-2 chat format
+        prompt = ""
+        system_msg = ""
+        for msg in messages:
+            if msg["role"] == "system":
+                system_msg = msg["content"]
+        
+        if system_msg:
+            prompt = f"[INST] <<SYS>>\n{system_msg}\n<</SYS>>\n\n"
+        else:
+            prompt = "[INST] "
+        
+        for i, msg in enumerate(messages):
+            if msg["role"] == "user":
+                if i > 0 and messages[i-1]["role"] != "system":
+                    prompt += "[INST] "
+                prompt += f"{msg['content']} [/INST] "
+            elif msg["role"] == "assistant":
+                prompt += f"{msg['content']} </s>"
+            elif msg["role"] == "tool":
+                prompt += f"Observation: {msg['content']} [/INST] "
+        
+        stop_tokens = ["</s>", "[INST]", "Observation:"]
+    else:
+        # Qwen/ChatML format
+        prompt = ""
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "system":
+                prompt += f"<|im_start|>system\n{content}<|im_end|>\n"
+            elif role == "user":
+                prompt += f"<|im_start|>user\n{content}<|im_end|>\n"
+            elif role == "assistant":
+                prompt += f"<|im_start|>assistant\n{content}<|im_end|>\n"
+            elif role == "tool":
+                prompt += f"<|im_start|>tool\n{content}<|im_end|>\n"
+        
+        prompt += "<|im_start|>assistant\n"
+        stop_tokens = ["<|im_end|>", "</tool_call>"]
+    
+    # Build grammar constraints if tool names provided
+    grammar = None
+    if tool_names and len(tool_names) > 0:
+        try:
+            from llama_cpp import LlamaGrammar
+            grammar_str = build_tool_grammar(tool_names)
+            # Note: Grammar is optional, don't fail if it doesn't work
+            # grammar = LlamaGrammar.from_string(grammar_str)
+        except Exception:
+            pass  # Grammar is optional enhancement
+    
+    # Generate response
+    output = model(
+        prompt, 
+        max_tokens=2048, 
+        temperature=0.1,  # Lower temperature for more deterministic tool calls
+        stop=stop_tokens,
+        grammar=grammar,
+    )
     response = output["choices"][0]["text"]
     
+    # Close any unclosed tags
     if "<tool_call>" in response and "</tool_call>" not in response:
         response += "</tool_call>"
     
@@ -714,35 +814,92 @@ def generate_response(model, messages: list) -> str:
 
 
 def parse_tool_call(response: str) -> dict:
-    """Parse tool call from response."""
-    if "<tool_call>" not in response:
-        return None
+    """
+    Parse tool call from response.
     
-    # Extract JSON from <tool_call> tags
-    start = response.find("<tool_call>") + len("<tool_call>")
-    end = response.find("</tool_call>")
-    if end == -1:
-        end = len(response)
+    Supports multiple formats:
+    - Qwen/Custom: <tool_call>{"tool": "name", "parameters": {...}}</tool_call>
+    - ToolLLaMA: Action: tool_name\nAction Input: {...}
+    - NexusRaven: Call: function_name(param="value")
+    - OpenAI/Native: {"name": "...", "arguments": {...}}
+    """
     
-    json_str = response[start:end].strip()
+    # Format 1: ToolLLaMA format (Action: / Action Input:)
+    if "Action:" in response and "Action Input:" in response:
+        try:
+            # Extract action name
+            action_match = response.split("Action:")[1].split("\n")[0].strip()
+            # Extract action input (JSON)
+            input_start = response.find("Action Input:") + len("Action Input:")
+            input_str = response[input_start:].strip()
+            
+            # Find JSON
+            brace_start = input_str.find("{")
+            brace_end = input_str.rfind("}") + 1
+            if brace_start >= 0 and brace_end > brace_start:
+                params = json.loads(input_str[brace_start:brace_end])
+                return {"tool": action_match, "parameters": params, "name": action_match, "arguments": params}
+        except (json.JSONDecodeError, IndexError):
+            pass
     
+    # Format 2: NexusRaven format (Call: func(args))
+    if "Call:" in response:
+        try:
+            call_match = response.split("Call:")[1].strip().split("\n")[0]
+            # Parse function call: func_name(arg1="val1", arg2="val2")
+            if "(" in call_match and ")" in call_match:
+                func_name = call_match[:call_match.find("(")].strip()
+                args_str = call_match[call_match.find("(")+1:call_match.rfind(")")]
+                # Simple parsing of kwargs
+                params = {}
+                if args_str.strip():
+                    # Handle key="value" pairs
+                    import re
+                    for match in re.finditer(r'(\w+)\s*=\s*["\']([^"\']*)["\']', args_str):
+                        params[match.group(1)] = match.group(2)
+                    # Handle key=number
+                    for match in re.finditer(r'(\w+)\s*=\s*(\d+)', args_str):
+                        params[match.group(1)] = int(match.group(2))
+                return {"tool": func_name, "parameters": params, "name": func_name, "arguments": params}
+        except (IndexError, ValueError):
+            pass
+    
+    # Format 3: <tool_call> tags (Qwen/Custom)
+    if "<tool_call>" in response:
+        start = response.find("<tool_call>") + len("<tool_call>")
+        end = response.find("</tool_call>")
+        if end == -1:
+            end = len(response)
+        
+        json_str = response[start:end].strip()
+        parsed = _parse_json_from_string(json_str)
+        if parsed:
+            return parsed
+    
+    # Format 4: Raw JSON with name/arguments (OpenAI format)
+    if '{"name"' in response or '{"tool"' in response:
+        parsed = _parse_json_from_string(response)
+        if parsed:
+            return parsed
+    
+    return None
+
+
+def _parse_json_from_string(s: str) -> dict:
+    """Helper to parse JSON from a string, with error recovery."""
     # Find JSON object
-    brace_start = json_str.find("{")
-    brace_end = json_str.rfind("}") + 1
+    brace_start = s.find("{")
+    brace_end = s.rfind("}") + 1
     
     if brace_start >= 0 and brace_end > brace_start:
-        raw_json = json_str[brace_start:brace_end]
+        raw_json = s[brace_start:brace_end]
         
-        # Fix common JSON issues from LLM output:
-        # 1. Newlines inside string values (invalid JSON)
-        # 2. Unescaped quotes inside strings
+        # Fix common JSON issues from LLM output
         def fix_json_string(s: str) -> str:
-            # Replace actual newlines with escaped \n (only inside strings)
-            # Simple approach: replace newlines between quotes
             result = []
             in_string = False
             escape_next = False
-            for i, char in enumerate(s):
+            for char in s:
                 if escape_next:
                     result.append(char)
                     escape_next = False
@@ -755,23 +912,34 @@ def parse_tool_call(response: str) -> dict:
                     in_string = not in_string
                     result.append(char)
                 elif char == '\n' and in_string:
-                    result.append('\\n')  # Escape newline inside string
+                    result.append('\\n')
                 elif char == '\r' and in_string:
-                    result.append('\\r')  # Escape carriage return
+                    result.append('\\r')
                 else:
                     result.append(char)
             return ''.join(result)
         
         try:
-            return json.loads(raw_json)
+            parsed = json.loads(raw_json)
         except json.JSONDecodeError:
-            # Try with fixed JSON
             try:
-                fixed_json = fix_json_string(raw_json)
-                return json.loads(fixed_json)
+                parsed = json.loads(fix_json_string(raw_json))
             except json.JSONDecodeError as e:
                 print(f"   ⚠️  Failed to parse tool call JSON: {e}")
-                print(f"   JSON was: {raw_json[:200]}...")
+                return None
+        
+        # Normalize to have both formats
+        if "name" in parsed and "tool" not in parsed:
+            parsed["tool"] = parsed["name"]
+        if "tool" in parsed and "name" not in parsed:
+            parsed["name"] = parsed["tool"]
+        if "arguments" in parsed and "parameters" not in parsed:
+            parsed["parameters"] = parsed["arguments"]
+        if "parameters" in parsed and "arguments" not in parsed:
+            parsed["arguments"] = parsed["parameters"]
+        
+        return parsed
+    
     return None
 
 

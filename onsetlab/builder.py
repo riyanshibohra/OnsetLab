@@ -460,16 +460,28 @@ class AgentBuilder:
         return agent
     
     def _step_1_generate_prompt(self):
-        """Step 1: Generate system prompt (concise, optimized for 3B models)."""
+        """Step 1: Generate system prompt based on model type."""
         print("\n📝 Step 1: Generating system prompt...")
         
-        # Use concise prompt optimized for 3B models
-        # No LLM needed - template-based is faster, free, and consistent
-        self._system_prompt = generate_prompt_for_3b(
+        # Get model info to determine prompt format
+        model_key = self.config.base_model
+        model_info = SUPPORTED_MODELS.get(model_key, {})
+        tool_format = model_info.get("tool_format", "qwen")
+        
+        # Use appropriate prompt format based on model
+        from .synthesis.prompts import get_default_prompt
+        self._system_prompt = get_default_prompt(
             problem_statement=self.problem_statement,
-            tools=self.tools
+            tools=self.tools,
+            model_format=tool_format
         )
-        print(f"   ✅ Generated concise prompt ({len(self._system_prompt)} chars, ~{len(self._system_prompt.split())} words)")
+        
+        pretrained = model_info.get("pretrained_on_tools", False)
+        if pretrained:
+            print(f"   ✅ Using {tool_format} format (model pre-trained on tools)")
+        else:
+            print(f"   ✅ Using {tool_format} format")
+        print(f"   📄 Prompt: {len(self._system_prompt)} chars, ~{len(self._system_prompt.split())} words")
     
     def _load_existing_data(self):
         """Load existing data from a previous run (skip generation steps)."""
@@ -515,17 +527,27 @@ class AgentBuilder:
     def _step_2_generate_data(self):
         """Step 2: Generate synthetic training data using single-tool generator."""
         
+        # Get model info to determine tool format
+        model_key = self.config.base_model
+        model_info = SUPPORTED_MODELS.get(model_key, {})
+        tool_format = model_info.get("tool_format", "qwen")
+        pretrained_on_tools = model_info.get("pretrained_on_tools", False)
+        
         # Auto-calculate examples based on tool count if not specified
-        gen_config = DataGenConfig()
+        gen_config = DataGenConfig(tool_format=tool_format)
         
         num_examples = self.config.num_examples
         if num_examples is None:
             num_examples = gen_config.calculate_total(len(self.tools))
             print(f"\n📊 Step 2: Auto-calculated {num_examples} examples for {len(self.tools)} tools")
-            print(f"   (25 examples/tool × 75% single-tool + 25% edge cases)")
+            if pretrained_on_tools:
+                print(f"   (Model pre-trained on tools - should learn quickly)")
+            else:
+                print(f"   (25 examples/tool × 75% single-tool + 25% edge cases)")
         else:
             print(f"\n📊 Step 2: Generating {num_examples} training examples...")
         
+        print(f"   Tool format: {tool_format}")
         print(f"   Batch size: {gen_config.batch_size} examples/call")
         print(f"   Expected API calls: ~{num_examples // gen_config.batch_size}")
         
