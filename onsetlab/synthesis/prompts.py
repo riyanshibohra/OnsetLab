@@ -46,12 +46,8 @@ def generate_prompt_for_3b(
     
     tools_section = "\n".join(tool_lines)
     
-    # Build concise prompt
-    clarification_line = ""
-    if include_clarification_hint:
-        clarification_line = "\nIf information is missing, ask before acting."
-    
-    prompt = f"""You are an assistant for: {problem_statement}
+    # Build concise but effective prompt
+    prompt = f"""I help with: {problem_statement}
 
 Tools:
 {tools_section}
@@ -59,7 +55,12 @@ Tools:
 To use a tool:
 <tool_call>
 {{"tool": "name", "parameters": {{"key": "value"}}}}
-</tool_call>{clarification_line}"""
+</tool_call>
+
+Rules:
+- Use parameter values exactly as the user says them (names, titles, etc.)
+- For greetings, thanks, or questions about me: respond in plain text, no tool
+- If required info is missing: ask, don't guess"""
     
     return prompt
 

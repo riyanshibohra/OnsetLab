@@ -3,6 +3,7 @@ run_pipeline.py
 colab_test.ipynb
 tests/
 test_xlam/
+web/
 # Python
 __pycache__/
 *.py[cod]

@@ -187,12 +187,9 @@ _ACTION_VERBS = {
 _SYSTEM_PARAMS = frozenset(["id", "status", "state", "type", "limit", "page"])
 
 
-def _get_query_action(query_lower: str) -> Optional[str]:
-    """Return the canonical action from query if present, else None."""
-    for action, keywords in _ACTION_VERBS.items():
-        if any(kw in query_lower for kw in keywords):
-            return action
-    return None
+def _get_query_actions(query_lower: str) -> list:
+    """Return all canonical actions whose keywords appear in query (e.g. 'list open issues' -> ['list', 'create'])."""
+    return [action for action, keywords in _ACTION_VERBS.items() if any(kw in query_lower for kw in keywords)]
 
 
 def _action_matches_tool(query_action: str, tool_lower: str, tool_desc: str) -> bool:
@@ -254,10 +251,10 @@ def validate_semantic_match(
     combined_words = set(re.findall(r"\b[a-z]{2,}\b", combined))
     overlap = query_words & combined_words
 
-    # 1) Intent alignment: if query has clear action verb, tool must match that action
-    query_action = _get_query_action(query_lower)
-    if query_action is not None:
-        if not _action_matches_tool(query_action, tool_lower, tool_desc):
+    # 1) Intent alignment: if query has clear action verbs, at least one must match the tool
+    query_actions = _get_query_actions(query_lower)
+    if query_actions:
+        if not any(_action_matches_tool(a, tool_lower, tool_desc) for a in query_actions):
             return False  # REJECT: wrong action (e.g. "send message" vs issue_create)
         # Action matches; still require some word overlap
         if len(overlap) == 0:

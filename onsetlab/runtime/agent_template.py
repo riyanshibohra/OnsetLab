@@ -739,8 +739,19 @@ def generate_response(model, messages: list, tool_names: list = None, model_form
     """
     # Detect format from model if auto
     if model_format == "auto":
-        # Default to ToolLLaMA format if available
-        model_format = "toolllama"
+        # Try to detect from model metadata or default to qwen (most common for fine-tuning)
+        try:
+            model_path = getattr(model, 'model_path', '') or ''
+            model_path_lower = model_path.lower()
+            if 'qwen' in model_path_lower:
+                model_format = "qwen"
+            elif 'llama' in model_path_lower or 'toolllama' in model_path_lower:
+                model_format = "toolllama"
+            else:
+                # Default to qwen for custom fine-tuned models
+                model_format = "qwen"
+        except:
+            model_format = "qwen"
     
     # Format prompt based on model type
     if model_format == "toolllama":

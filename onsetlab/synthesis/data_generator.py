@@ -15,6 +15,7 @@ Key features:
 import json
 import random
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Optional
 from pathlib import Path
@@ -33,21 +34,21 @@ class DataGenConfig:
     - SUGGESTED: 25 examples/tool → Sweet spot for 3B model
     - MAXIMUM: 40 examples/tool → Cap to avoid overfitting
     
-    EXAMPLES BY TOOL COUNT:
+    EXAMPLES BY TOOL COUNT (at 50/tool suggested):
     | Tools | Minimum | Suggested | Maximum |
     |-------|---------|-----------|---------|
-    | 10    | 133     | 333       | 533     |
-    | 15    | 200     | 500       | 800     |
-    | 20    | 267     | 667       | 1067    |
-    | 50    | 667     | 1667      | 2667    |
+    | 10    | 200     | 667       | 1000    |
+    | 11    | 220     | 733       | 1100    |
+    | 15    | 300     | 1000      | 1500    |
+    | 20    | 400     | 1333      | 2000    |
     
     Note: These are TOTAL examples (75% single-tool + 25% edge cases)
     """
     
     # Per-tool limits (ENFORCED)
     min_per_tool: int = 15            # Minimum - below this = underfitting
-    examples_per_tool: int = 35       # Suggested - higher for better generalization
-    max_per_tool: int = 50            # Maximum - 3B can handle more with LoRA
+    examples_per_tool: int = 50       # Suggested - 50/tool for robust learning
+    max_per_tool: int = 75            # Maximum - 3B can handle more with LoRA
     
     # Distribution (must sum to 1.0)
     single_tool_ratio: float = 0.75   # 75% successful tool calls
@@ -66,7 +67,7 @@ class DataGenConfig:
     test_ratio: float = 0.05
     
     # Batch settings
-    batch_size: int = 25              # Examples per LLM call (higher = faster generation)
+    batch_size: int = 20              # Examples per LLM call (20 = more per call, fewer total calls)
     max_retries: int = 3
     
     # API settings (model used to GENERATE training data; provider = OpenAI if key not sk-ant-*, else Anthropic)
@@ -260,28 +261,37 @@ class DataGenerator:
     # =========================================================================
     
     def _generate_single_tool(self, target: int) -> list:
-        """Generate successful single-tool examples with balanced coverage."""
+        """Generate successful single-tool examples with balanced coverage using parallel API calls."""
         examples = []
         tool_counts = {self._get_name(t): 0 for t in self.tools}
-        min_per_tool = max(5, target // len(self.tools))
+        parallel_workers = 4  # Make 4 API calls at once
         
         while len(examples) < target:
-            # Pick tools that need more examples
-            batch_tools = sorted(
-                self.tools, 
-                key=lambda t: tool_counts[self._get_name(t)]
-            )[:5]
+            # Prepare multiple batches of tools (for parallel calls)
+            batch_list = []
+            for _ in range(parallel_workers):
+                batch_tools = sorted(
+                    self.tools, 
+                    key=lambda t: tool_counts[self._get_name(t)]
+                )[:5]
+                batch_list.append(batch_tools)
             
-            batch = self._call_llm_single_tool(batch_tools)
+            # Make parallel API calls
+            with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+                futures = [executor.submit(self._call_llm_single_tool, bt) for bt in batch_list]
+                for future in as_completed(futures):
+                    try:
+                        batch = future.result()
+                        for ex in batch:
+                            tool = ex.get('tool')
+                            if tool in tool_counts:
+                                tool_counts[tool] += 1
+                                examples.append(ex)
+                    except Exception as e:
+                        print(f"   ⚠ Batch failed: {e}")
             
-            for ex in batch:
-                tool = ex.get('tool')
-                if tool in tool_counts:
-                    tool_counts[tool] += 1
-                    examples.append(ex)
-            
-            if len(examples) % 50 == 0:
-                print(f"   ... {len(examples)}/{target}")
+            # Progress after parallel batch
+            print(f"   ✓ {len(examples)}/{target} examples generated")
         
         return examples[:target]
     
@@ -298,14 +308,22 @@ class DataGenerator:
     # =========================================================================
     
     def _generate_clarification(self, target: int) -> list:
-        """Generate examples where user gives incomplete info."""
+        """Generate examples where user gives incomplete info using parallel API calls."""
         examples = []
+        parallel_workers = 3
         
         while len(examples) < target:
-            # Pick random tools
-            batch_tools = random.sample(self.tools, min(5, len(self.tools)))
-            batch = self._call_llm_clarification(batch_tools)
-            examples.extend(batch)
+            batch_list = [random.sample(self.tools, min(5, len(self.tools))) for _ in range(parallel_workers)]
+            
+            with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+                futures = [executor.submit(self._call_llm_clarification, bt) for bt in batch_list]
+                for future in as_completed(futures):
+                    try:
+                        examples.extend(future.result())
+                    except Exception as e:
+                        print(f"   ⚠ Batch failed: {e}")
+            
+            print(f"   ✓ {len(examples)}/{target} clarification examples")
         
         return examples[:target]
     
@@ -324,19 +342,23 @@ class DataGenerator:
     def _generate_follow_up(self, target: int) -> list:
         """
         Generate examples where user asks a follow-up question with conversation context.
-        
-        These teach the model to:
-        1. Parse injected conversation context
-        2. Carry forward relevant parameters (owner, repo, etc.)
-        3. Apply new filters based on the follow-up query
+        Uses parallel API calls for speed.
         """
         examples = []
+        parallel_workers = 3
         
         while len(examples) < target:
-            # Pick random tools that have modifiable params
-            batch_tools = random.sample(self.tools, min(5, len(self.tools)))
-            batch = self._call_llm_follow_up(batch_tools)
-            examples.extend(batch)
+            batch_list = [random.sample(self.tools, min(5, len(self.tools))) for _ in range(parallel_workers)]
+            
+            with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+                futures = [executor.submit(self._call_llm_follow_up, bt) for bt in batch_list]
+                for future in as_completed(futures):
+                    try:
+                        examples.extend(future.result())
+                    except Exception as e:
+                        print(f"   ⚠ Batch failed: {e}")
+            
+            print(f"   ✓ {len(examples)}/{target} follow-up examples")
         
         return examples[:target]
     
@@ -351,12 +373,20 @@ class DataGenerator:
     # =========================================================================
     
     def _generate_refusal(self, target: int) -> list:
-        """Generate examples where request is out of scope."""
+        """Generate examples where request is out of scope using parallel API calls."""
         examples = []
+        parallel_workers = 3
         
         while len(examples) < target:
-            batch = self._call_llm_refusal()
-            examples.extend(batch)
+            with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+                futures = [executor.submit(self._call_llm_refusal) for _ in range(parallel_workers)]
+                for future in as_completed(futures):
+                    try:
+                        examples.extend(future.result())
+                    except Exception as e:
+                        print(f"   ⚠ Batch failed: {e}")
+            
+            print(f"   ✓ {len(examples)}/{target} refusal examples")
         
         return examples[:target]
     
@@ -373,12 +403,20 @@ class DataGenerator:
     # =========================================================================
     
     def _generate_casual(self, target: int) -> list:
-        """Generate casual conversation examples."""
+        """Generate casual conversation examples using parallel API calls."""
         examples = []
+        parallel_workers = 3
         
         while len(examples) < target:
-            batch = self._call_llm_casual()
-            examples.extend(batch)
+            with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+                futures = [executor.submit(self._call_llm_casual) for _ in range(parallel_workers)]
+                for future in as_completed(futures):
+                    try:
+                        examples.extend(future.result())
+                    except Exception as e:
+                        print(f"   ⚠ Batch failed: {e}")
+            
+            print(f"   ✓ {len(examples)}/{target} casual examples")
         
         return examples[:target]
     
