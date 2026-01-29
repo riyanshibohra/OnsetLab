@@ -2,12 +2,14 @@
 Single-Tool Data Generator
 ===========================
 Training data generation for single-tool-per-turn architecture.
+Orchestrates: prompt building (generators), API calls, validation (validators), format conversion.
 
 Key features:
 - Single tool calls only (no multi-tool chains)
 - Strong clarification handling (users often give incomplete info)
 - Batched generation (10 examples per LLM call)
 - Tool-aware sample sizing
+- Format + semantic validation (validators.py)
 """
 
 import json
@@ -16,6 +18,9 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 from pathlib import Path
+
+from . import generators as gen
+from . import validators as val
 
 
 @dataclass
@@ -283,47 +288,10 @@ class DataGenerator:
     def _call_llm_single_tool(self, tools: list) -> list:
         """Generate batch of single-tool examples."""
         tools_desc = self._format_tools(tools)
-        tool_names = [self._get_name(t) for t in tools]
-        
-        prompt = f"""Generate {self.config.batch_size} training examples for an AI assistant.
-
-Context: {self.problem_statement}
-
-TOOLS (use EXACT names and correct TYPES):
-{tools_desc}
-
-CRITICAL - ENUM VALUES ARE CASE-SENSITIVE:
-- If a param shows enum(OPEN|CLOSED), you MUST use "OPEN" or "CLOSED" exactly (uppercase)
-- Do NOT use lowercase like "open" or "closed" - the API will reject it
-- Always copy enum values EXACTLY as shown in the param list above
-
-CRITICAL RULES:
-1. Tool name must be EXACTLY from the list above
-2. The USER QUERY must CONTAIN all required parameter values explicitly
-3. DO NOT make up/hallucinate values that the user didn't provide!
-4. TYPES ARE CRITICAL:
-   - array params MUST use [...] syntax: "labels": ["bug", "urgent"]
-   - number params MUST NOT be quoted: "limit": 10 (NOT "limit": "10")
-   - boolean params use true/false: "active": true
-
-GOOD examples (user provides all info):
-- "Create issue in facebook/react titled 'Bug in hooks'" → owner=facebook, repo=react, title=Bug in hooks ✓
-- "List open issues in kubernetes/kubernetes with bug label" → all params from query ✓
-- "Send 'Deploy complete' to channel C123456" → channel and message from query ✓
-
-BAD examples (DO NOT generate these - info is missing):
-- "Create an issue about the bug" → NO owner/repo specified! ✗
-- "Comment on issue 73" → NO owner/repo specified! ✗
-- "Send a message to the team" → NO channel specified! ✗
-
-Output JSON array:
-[
-  {{"query": "user request with ALL required info", "tool": "exact_tool_name", "parameters": {{"param": "value_from_query"}}}}
-]
-
-Generate {self.config.batch_size} diverse examples where the user query contains ALL required information:"""
-
-        return self._call_llm(prompt)
+        prompt = gen.build_single_tool_prompt(
+            self.problem_statement, tools_desc, self.config.batch_size
+        )
+        return self._call_llm(prompt, example_type="tool_call")
     
     # =========================================================================
     # Clarification Generation (most important edge case!)
@@ -344,32 +312,10 @@ Generate {self.config.batch_size} diverse examples where the user query contains
     def _call_llm_clarification(self, tools: list) -> list:
         """Generate clarification examples - user missing required params."""
         tools_desc = self._format_tools_with_required(tools)
-        
-        prompt = f"""Generate {self.config.batch_size} examples where user wants to use a tool but is MISSING required information.
-
-Context: {self.problem_statement}
-
-TOOLS AND THEIR REQUIRED PARAMS:
-{tools_desc}
-
-PATTERN:
-1. User makes a request but leaves out 1-2 required parameters
-2. Assistant asks a SPECIFIC question to get the missing info
-3. Do NOT guess or use placeholders - ask!
-
-EXAMPLES:
-- User: "create an issue" → Missing: repo, title → Ask: "Which repository should I create the issue in, and what should the title be?"
-- User: "send a message to the team" → Missing: channel, message → Ask: "Which Slack channel should I send to, and what's the message?"
-- User: "schedule a meeting tomorrow" → Missing: time, title → Ask: "What time tomorrow, and what should I call the meeting?"
-
-Output JSON array:
-[
-  {{"query": "incomplete user request", "response": "friendly question asking for missing info", "missing_params": ["param1", "param2"]}}
-]
-
-Generate {self.config.batch_size} diverse clarification examples:"""
-
-        return self._call_llm(prompt)
+        prompt = gen.build_clarification_prompt(
+            self.problem_statement, tools_desc, self.config.batch_size
+        )
+        return self._call_llm(prompt, example_type="clarification")
     
     # =========================================================================
     # Follow-up Generation (context-aware queries)
@@ -397,45 +343,8 @@ Generate {self.config.batch_size} diverse clarification examples:"""
     def _call_llm_follow_up(self, tools: list) -> list:
         """Generate follow-up examples with conversation context."""
         tools_desc = self._format_tools_with_required(tools)
-        
-        prompt = f"""Generate follow-up query training examples for a conversational agent.
-
-TOOLS AVAILABLE:
-{tools_desc}
-
-SCENARIO: The user previously asked a question, got a response, and now asks a SHORT follow-up
-that references the previous context. The follow-up query should be BRIEF (like real users).
-
-FORMAT - The query MUST include conversation context in this EXACT format:
-[Conversation Context]
-User asked: <previous query>
-Agent called <tool_name> -> <brief result summary>
-[Current Query]
-<short follow-up question>
-
-EXAMPLES OF GOOD FOLLOW-UP PATTERNS:
-1. "what about the open ones" (filter change)
-2. "show me just 5" (limit change)  
-3. "same but for the other repo" (param swap)
-4. "any from last week?" (time filter)
-5. "what's the most recent?" (sort/limit)
-6. "now search in the body too" (param addition)
-
-OUTPUT FORMAT (JSON array):
-[
-  {{"query": "[Conversation Context]\\nUser asked: find issues in owner/repo\\nAgent called list_issues -> Found 5 issues: #1 Bug, #2 Feature...\\n[Current Query]\\nwhat about the open ones", "tool": "list_issues", "params": {{"owner": "owner", "repo": "repo", "state": "OPEN"}}}}
-]
-
-RULES:
-1. The follow-up query must be SHORT and natural (3-8 words)
-2. Carry forward ALL relevant params from the previous query
-3. Apply the modification from the follow-up (filter, limit, sort, etc.)
-4. Use EXACT tool names and valid param values from the list above
-5. ENUM VALUES ARE CASE-SENSITIVE: Use "OPEN"/"CLOSED" exactly as shown, NOT lowercase
-
-Generate {self.config.batch_size} diverse follow-up examples:"""
-
-        return self._call_llm(prompt)
+        prompt = gen.build_follow_up_prompt(tools_desc, self.config.batch_size)
+        return self._call_llm(prompt, example_type="follow_up")
     
     # =========================================================================
     # Refusal Generation
@@ -454,29 +363,10 @@ Generate {self.config.batch_size} diverse follow-up examples:"""
     def _call_llm_refusal(self) -> list:
         """Generate refusal examples - can't do what user asks."""
         tool_names = [self._get_name(t) for t in self.tools[:10]]
-        
-        prompt = f"""Generate {self.config.batch_size} examples where user asks for something the assistant CANNOT do.
-
-Context: {self.problem_statement}
-Available tools: {tool_names}
-
-PATTERN:
-1. User asks for something outside the available tools
-2. Assistant politely declines and mentions what they CAN help with
-
-EXAMPLES:
-- User: "Can you book a flight for me?" → "I can't book flights, but I can help you with GitHub, Slack, or scheduling meetings."
-- User: "Send an email to john@example.com" → "I don't have email capabilities, but I can send Slack messages if that helps."
-- User: "What's the weather?" → "I can't check weather, but I can search the web or help with your calendar."
-
-Output JSON array:
-[
-  {{"query": "out of scope request", "response": "polite decline mentioning available capabilities"}}
-]
-
-Generate {self.config.batch_size} diverse refusal examples:"""
-
-        return self._call_llm(prompt)
+        prompt = gen.build_refusal_prompt(
+            self.problem_statement, tool_names, self.config.batch_size
+        )
+        return self._call_llm(prompt, example_type="refusal")
     
     # =========================================================================
     # Casual Conversation Generation
@@ -494,66 +384,25 @@ Generate {self.config.batch_size} diverse refusal examples:"""
     
     def _call_llm_casual(self) -> list:
         """Generate casual conversation - greetings, capability questions, thanks, etc."""
-        
-        # Get tool names for capability descriptions
-        tool_names = [t.name for t in self.tools]
+        tool_names = [self._get_name(t) for t in self.tools]
         tool_list = ", ".join(tool_names[:5]) + ("..." if len(tool_names) > 5 else "")
-        
-        prompt = f"""Generate {self.config.batch_size} casual conversation examples that DON'T need any tool call.
-
-The agent has these tools: {tool_list}
-
-CRITICAL: These are messages where the user is NOT asking to DO something.
-The assistant should respond with friendly text, NO tool calls.
-
-CATEGORIES TO COVER (mix all types):
-
-1. GREETINGS:
-   - "Hey!" → "Hey there! How can I help you today?"
-   - "Good morning" → "Good morning! What can I help you with?"
-   - "hi" → "Hi! What can I do for you?"
-
-2. THANKS:
-   - "Thanks!" → "You're welcome! Let me know if you need anything else."
-   - "That was helpful" → "Glad I could help! Anything else?"
-   - "perfect" → "Great! Let me know if you need anything else."
-
-3. CAPABILITY QUESTIONS:
-   - "What can you do?" → "I can help with GitHub issues and Slack. I can list issues, create them, add comments, and send Slack messages. What would you like me to do?"
-   - "What are you?" → "I'm an assistant that helps manage GitHub issues and Slack messages."
-   - "help" → "I'm here to help! I can work with GitHub issues and Slack. What do you need?"
-
-4. ACKNOWLEDGMENTS:
-   - "ok" → "Got it! Let me know when you need something."
-   - "I see" → "Yep! Anything else?"
-   - "cool" → "Glad that works! What's next?"
-
-5. CONFUSION:
-   - "I don't understand" → "No problem! What would you like me to explain?"
-   - "wait what" → "Sorry if I was unclear. How can I help?"
-
-Output JSON array:
-[
-  {{"query": "casual message", "response": "friendly response"}}
-]
-
-Generate {self.config.batch_size} DIVERSE examples from ALL categories:"""
-
-        return self._call_llm(prompt)
+        prompt = gen.build_casual_prompt(tool_list, self.config.batch_size)
+        return self._call_llm(prompt, example_type="casual")
     
     # =========================================================================
     # LLM Calling
     # =========================================================================
     
-    def _call_llm(self, prompt: str) -> list:
-        """Make LLM API call."""
+    def _call_llm(self, prompt: str, example_type: str = "tool_call") -> list:
+        """Make LLM API call; validate responses with validators (format + semantic)."""
         if self.client is None:
             self._init_client()
-        
+        # Semantic validation only for tool-call examples (Shaw / Microsoft: filter wrong-tool-for-query)
+        do_semantic = example_type in ("tool_call", "follow_up")
+
         for attempt in range(self.config.max_retries):
             try:
                 self.stats["api_calls"] += 1
-                
                 if self.api_provider == "openai":
                     response = self.client.chat.completions.create(
                         model=self.config.openai_model,
@@ -569,24 +418,20 @@ Generate {self.config.batch_size} DIVERSE examples from ALL categories:"""
                         messages=[{"role": "user", "content": prompt}]
                     )
                     content = response.content[0].text.strip()
-                
-                # Parse JSON
+
                 examples = self._parse_json(content)
-                
-                # Validate tool names
-                valid = []
-                for ex in examples:
-                    if self._validate_example(ex):
-                        valid.append(ex)
-                
+                valid = [
+                    ex for ex in examples
+                    if val.validate_example(
+                        ex, self.tool_names, self.tool_map, self.tools, semantic=do_semantic
+                    )
+                ]
                 return valid
-                
             except Exception as e:
                 if attempt == self.config.max_retries - 1:
                     self.stats["failed"] += 1
                     print(f"   ⚠️ Batch failed: {e}")
                     return []
-        
         return []
     
     def _init_client(self):
@@ -621,157 +466,6 @@ Generate {self.config.batch_size} DIVERSE examples from ALL categories:"""
             return json.loads(content)
         except:
             return []
-    
-    def _validate_example(self, ex: dict) -> bool:
-        """Validate and fix example, including type coercion."""
-        # Skip placeholders
-        if self._has_placeholder(str(ex)):
-            return False
-        
-        # Edge cases without tool are valid
-        if ex.get('tool') is None and ex.get('response'):
-            return True
-        
-        # Fix tool name if needed
-        tool = ex.get('tool')
-        if tool:
-            actual_tool = None
-            if tool in self.tool_names:
-                actual_tool = tool
-            else:
-                # Try normalized
-                normalized = tool.lower().replace("-", "_")
-                if normalized in self.tool_map:
-                    ex['tool'] = self.tool_map[normalized]
-                    actual_tool = self.tool_map[normalized]
-            
-            if not actual_tool:
-                return False
-            
-            # Fix parameter types based on schema
-            params = ex.get('parameters', {})
-            if params:
-                self._fix_param_types(actual_tool, params)
-            
-            return True
-        
-        return True
-    
-    def _fix_param_types(self, tool_name: str, params: dict):
-        """
-        Coerce parameter values to correct types based on tool schema.
-        
-        Common LLM mistakes:
-        - "10" instead of 10 (number)
-        - "bug" instead of ["bug"] (array)
-        - "true" instead of true (boolean)
-        - null for optional params (remove them)
-        """
-        # Find the tool schema
-        tool_schema = None
-        for t in self.tools:
-            name = self._get_name(t)
-            if name == tool_name:
-                tool_schema = t
-                break
-        
-        if not tool_schema:
-            return
-        
-        schema_params = self._get_params(tool_schema)
-        required_params = set(self._get_required(tool_schema))
-        
-        # First pass: remove None values for optional params
-        params_to_remove = []
-        for param_name, value in params.items():
-            if value is None and param_name not in required_params:
-                params_to_remove.append(param_name)
-        for param_name in params_to_remove:
-            del params[param_name]
-        
-        # Second pass: fix types
-        for param_name, value in list(params.items()):
-            if param_name not in schema_params:
-                continue
-            
-            param_info = schema_params[param_name]
-            if not isinstance(param_info, dict):
-                continue
-            
-            expected_type = param_info.get('type', 'string')
-            
-            # Handle None for required params - use default or empty value
-            if value is None:
-                if expected_type == 'array':
-                    params[param_name] = []
-                elif expected_type in ('number', 'integer'):
-                    params[param_name] = 0
-                elif expected_type == 'boolean':
-                    params[param_name] = False
-                elif expected_type == 'string':
-                    params[param_name] = ""
-                continue
-            
-            # Fix array: "bug" -> ["bug"], "bug,feature" -> ["bug", "feature"]
-            if expected_type == 'array':
-                if isinstance(value, str):
-                    if ',' in value:
-                        params[param_name] = [v.strip() for v in value.split(',')]
-                    else:
-                        params[param_name] = [value] if value else []
-                elif not isinstance(value, list):
-                    # Convert any other type to single-element array
-                    params[param_name] = [value] if value else []
-            
-            # Fix number/integer: "10" -> 10
-            elif expected_type in ('number', 'integer'):
-                if isinstance(value, str):
-                    try:
-                        if '.' in value:
-                            params[param_name] = float(value)
-                        else:
-                            params[param_name] = int(value)
-                    except ValueError:
-                        params[param_name] = 0
-                elif isinstance(value, bool):
-                    # bool is subclass of int, convert explicitly
-                    params[param_name] = 1 if value else 0
-            
-            # Fix boolean: "true" -> True, "false" -> False
-            elif expected_type == 'boolean':
-                if isinstance(value, str):
-                    params[param_name] = value.lower() in ('true', 'yes', '1')
-                elif isinstance(value, (int, float)):
-                    params[param_name] = bool(value)
-            
-            # Fix string: convert non-strings to strings
-            elif expected_type == 'string' and not isinstance(value, str):
-                if value is not None:
-                    params[param_name] = str(value)
-            
-            # Fix enum values: case-sensitive matching
-            # If schema has enum, find the correct case version
-            enum_values = param_info.get('enum')
-            if enum_values and isinstance(value, str):
-                # Build case-insensitive lookup
-                enum_map = {str(v).lower(): v for v in enum_values}
-                value_lower = value.lower()
-                if value_lower in enum_map:
-                    params[param_name] = enum_map[value_lower]
-    
-    def _has_placeholder(self, text: str) -> bool:
-        """Check for placeholder patterns."""
-        patterns = [
-            r'\{\{[^{}]+\}\}',        # {{date}}
-            r'<[A-Z][A-Z_]+>',        # <NAME>
-            r'\[[A-Z][A-Z_]*\]',      # [DATE]
-            r'PLACEHOLDER',
-            r'YOUR_\w+_HERE',
-        ]
-        for p in patterns:
-            if re.search(p, text, re.IGNORECASE):
-                return True
-        return False
     
     # =========================================================================
     # Format Conversion

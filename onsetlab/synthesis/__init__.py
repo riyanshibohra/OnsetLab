@@ -17,7 +17,7 @@ from .prompts import (
     get_default_prompt,
 )
 
-# Data generation
+# Data generation (orchestrator; uses .generators and .validators internally)
 from .data_generator import (
     DataGenerator,
     DataGenConfig,
