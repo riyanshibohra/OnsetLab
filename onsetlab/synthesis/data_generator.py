@@ -69,7 +69,7 @@ class DataGenConfig:
     batch_size: int = 25              # Examples per LLM call (higher = faster generation)
     max_retries: int = 3
     
-    # API settings
+    # API settings (model used to GENERATE training data; provider = OpenAI if key not sk-ant-*, else Anthropic)
     openai_model: str = "gpt-4o"
     anthropic_model: str = "claude-sonnet-4-20250514"
     

@@ -169,23 +169,58 @@ def validate_format(
 
 
 # -----------------------------------------------------------------------------
-# Semantic validation (tool call matches user intent)
+# Semantic validation (tool call matches user intent + param values from query)
 # -----------------------------------------------------------------------------
 
-# Action/intent keywords often present in queries for common tool types
-_QUERY_TOOL_SIGNALS = {
+# Action verbs: query intent → must match tool name/description
+_ACTION_VERBS = {
     "create": ["create", "add", "new", "open", "write", "post", "make"],
     "list": ["list", "show", "get all", "find", "search", "fetch", "see", "what"],
-    "read": ["get", "read", "fetch", "retrieve", "show me", "details"],
+    "read": ["get", "read", "fetch", "retrieve", "show me", "details", "recall"],
     "update": ["update", "edit", "change", "modify"],
     "delete": ["delete", "remove"],
     "send": ["send", "post", "message", "notify", "tell"],
     "comment": ["comment", "reply", "respond"],
-    "memory": ["remember", "save", "recall", "what did i", "stored", "memory", "favorite"],
-    "issue": ["issue", "issues", "bug", "ticket"],
-    "slack": ["slack", "channel", "message", "send to"],
-    "calendar": ["calendar", "meeting", "schedule", "event"],
+    "memory": ["remember", "save", "recall", "stored", "memory", "favorite"],
 }
+# Params whose values are system/enum (not user-provided from query)
+_SYSTEM_PARAMS = frozenset(["id", "status", "state", "type", "limit", "page"])
+
+
+def _get_query_action(query_lower: str) -> Optional[str]:
+    """Return the canonical action from query if present, else None."""
+    for action, keywords in _ACTION_VERBS.items():
+        if any(kw in query_lower for kw in keywords):
+            return action
+    return None
+
+
+def _action_matches_tool(query_action: str, tool_lower: str, tool_desc: str) -> bool:
+    """True if tool name or description reflects the same action as the query."""
+    combined = f"{tool_lower} {tool_desc}"
+    return query_action in combined
+
+
+def _param_values_from_query(query_lower: str, parameters: dict) -> bool:
+    """
+    Require that substantive string param values appear in the query (anti-hallucination).
+    Skips system params (id, status, state, type, limit, page).
+    """
+    for param_name, param_value in parameters.items():
+        if param_name in _SYSTEM_PARAMS:
+            continue
+        if not isinstance(param_value, str) or len(param_value) <= 3:
+            continue
+        val_lower = param_value.lower()
+        # Value should appear in query (case-insensitive)
+        if " " in param_value or "/" in param_value:
+            # e.g. "facebook/react" or "Deploy complete" — require each part in query
+            parts = re.split(r"[\s/]+", param_value)
+            if any(len(p) > 2 and p.lower() not in query_lower for p in parts):
+                return False  # REJECT: hallucinated value
+        elif val_lower not in query_lower:
+            return False  # REJECT: model hallucinated this value
+    return True
 
 
 def validate_semantic_match(
@@ -196,11 +231,11 @@ def validate_semantic_match(
 ) -> bool:
     """
     Check if the chosen tool and params make sense for the user query.
-    Returns True if the tool call is semantically appropriate for the query.
+    Requires BOTH (1) word overlap / intent alignment and (2) param values from query.
 
-    Uses heuristics: query intent keywords vs tool name/description.
-    This is the #1 improvement for training data quality (Shaw / Microsoft):
-    filtering out examples where the model would learn "wrong tool for the query".
+    - If query has a clear action verb (create, list, send, ...), tool must have the SAME action.
+    - Otherwise allow only if there is word overlap.
+    - Substantive string param values must appear in the query (catches hallucinated values).
     """
     if not query or not tool_name:
         return True  # Skip semantic check for edge cases
@@ -208,35 +243,35 @@ def validate_semantic_match(
     query_lower = query.lower().strip()
     tool_lower = tool_name.lower().replace("-", "_").replace(" ", "_")
 
-    # Get tool description for intent matching
     tool_desc = ""
     for t in tools:
         if _get_name(t) == tool_name:
-            tool_desc = (t.get('description', '') if isinstance(t, dict) else getattr(t, 'description', '')).lower()
+            tool_desc = (t.get("description", "") if isinstance(t, dict) else getattr(t, "description", "")).lower()
             break
 
+    query_words = set(re.findall(r"\b[a-z]{2,}\b", query_lower))
     combined = f"{tool_lower} {tool_desc}"
-    # Require some lexical overlap: meaningful words from query appear in tool name or description
-    query_words = set(re.findall(r'\b[a-z]{2,}\b', query_lower))
-    combined_words = set(re.findall(r'\b[a-z]{2,}\b', combined))
+    combined_words = set(re.findall(r"\b[a-z]{2,}\b", combined))
     overlap = query_words & combined_words
 
-    # If query has clear action/entity words, check they align with tool
-    for intent, keywords in _QUERY_TOOL_SIGNALS.items():
-        if any(kw in query_lower for kw in keywords):
-            # Query suggests this intent; tool name or desc should relate
-            if intent in tool_lower or intent in tool_desc:
-                return True
-            # Allow if we have other overlap (e.g. "list issues" vs list_issues)
-            if overlap:
-                return True
-            # Strict: intent keyword in query but no intent in tool
-            if intent in ["memory", "issue", "slack", "calendar"]:
-                if intent not in tool_lower and intent not in tool_desc:
-                    return False
+    # 1) Intent alignment: if query has clear action verb, tool must match that action
+    query_action = _get_query_action(query_lower)
+    if query_action is not None:
+        if not _action_matches_tool(query_action, tool_lower, tool_desc):
+            return False  # REJECT: wrong action (e.g. "send message" vs issue_create)
+        # Action matches; still require some word overlap
+        if len(overlap) == 0:
+            return False
+    else:
+        # No clear action verb: allow only if there's word overlap
+        if len(overlap) == 0:
+            return False
 
-    # Default: allow if there's any word overlap (query and tool/desc share a word)
-    return len(overlap) > 0 or len(query_words) < 3
+    # 2) Param values must come from query (no hallucinated values)
+    if not _param_values_from_query(query_lower, parameters or {}):
+        return False
+
+    return True
 
 
 def validate_example(
