@@ -733,6 +733,19 @@ class DataGenerator:
                             param_parts.append(f"{pname}:number(no quotes)")
                         elif ptype == 'boolean':
                             param_parts.append(f"{pname}:boolean(true/false)")
+                        elif ptype == 'object':
+                            # Handle nested object types - show properties if available
+                            props = pinfo.get('properties', {})
+                            if props:
+                                # Show nested property names with types
+                                nested_parts = []
+                                for prop_name, prop_info in props.items():
+                                    prop_type = prop_info.get('type', 'string') if isinstance(prop_info, dict) else 'string'
+                                    nested_parts.append(f"{prop_name}:{prop_type}")
+                                nested_str = ", ".join(nested_parts[:5])  # Show up to 5 nested props
+                                param_parts.append(f"{pname}:object({{{nested_str}}})")
+                            else:
+                                param_parts.append(f"{pname}:object({{...}})")
                         else:
                             param_parts.append(f"{pname}:string")
                     else:

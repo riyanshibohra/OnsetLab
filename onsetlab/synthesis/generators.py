@@ -3,6 +3,9 @@ LLM Prompt Generators for Training Data
 ========================================
 Builds prompts for single-tool, clarification, follow-up, refusal, and casual
 example generation. Used by DataGenerator; no API calls here—pure prompt construction.
+
+IMPORTANT: All prompts are GENERIC - no hardcoded service names (GitHub, Slack, etc.)
+The actual tools are passed in via tools_desc which is dynamically built.
 """
 
 
@@ -29,23 +32,31 @@ CRITICAL RULES:
 2. The USER QUERY must CONTAIN all required parameter values explicitly
 3. DO NOT make up/hallucinate values that the user didn't provide!
 4. TYPES ARE CRITICAL:
-   - array params MUST use [...] syntax: "labels": ["bug", "urgent"]
-   - number params MUST NOT be quoted: "limit": 10 (NOT "limit": "10")
-   - boolean params use true/false: "active": true
+   - string params: "name": "value"
+   - array params: "labels": ["item1", "item2"] (use [...] syntax)
+   - number params: "limit": 10 (NO quotes around numbers)
+   - boolean params: "active": true (use true/false, no quotes)
+   - object params: "data": {{"key": "value", "nested": "field"}} (nested dict structure)
 
-GOOD examples (user provides all info):
-- "Create issue in facebook/react titled 'Bug in hooks'" → owner=facebook, repo=react, title=Bug in hooks ✓
-- "List open issues in kubernetes/kubernetes with bug label" → all params from query ✓
-- "Send 'Deploy complete' to channel C123456" → channel and message from query ✓
+PATTERN FOR GOOD EXAMPLES:
+- User query explicitly contains ALL required parameter values
+- Tool parameters are extracted directly from what the user said
+- No guessing or placeholder values
 
-BAD examples (DO NOT generate these - info is missing):
-- "Create an issue about the bug" → NO owner/repo specified! ✗
-- "Comment on issue 73" → NO owner/repo specified! ✗
-- "Send a message to the team" → NO channel specified! ✗
+PATTERN FOR BAD EXAMPLES (DO NOT GENERATE):
+- User query is vague and missing required info
+- Parameters contain made-up values not in the query
+- Placeholder text like "your_value" or "example"
 
-Output JSON array:
+IMPORTANT - OBJECT TYPE PARAMETERS:
+If a param shows "object({{...}})", you MUST generate a NESTED DICT, not a string!
+Example: event:object({{summary:string, start:string}}) means generate:
+  "event": {{"summary": "Team meeting", "start": "2024-03-15T09:00:00"}}
+NOT: "event": "Team meeting at 9am" ← WRONG!
+
+Output JSON array (note: object params use nested dicts):
 [
-  {{"query": "user request with ALL required info", "tool": "exact_tool_name", "parameters": {{"param": "value_from_query"}}}}
+  {{"query": "user request", "tool": "tool_name", "parameters": {{"stringParam": "value", "objectParam": {{"nestedKey": "nestedValue"}}}}}}
 ]
 
 Generate {batch_size} diverse examples where the user query contains ALL required information:"""
@@ -69,17 +80,17 @@ PATTERN:
 2. Assistant asks a SPECIFIC question to get the missing info
 3. Do NOT guess or use placeholders - ask!
 
-EXAMPLES:
-- User: "create an issue" → Missing: repo, title → Ask: "Which repository should I create the issue in, and what should the title be?"
-- User: "send a message to the team" → Missing: channel, message → Ask: "Which Slack channel should I send to, and what's the message?"
-- User: "schedule a meeting tomorrow" → Missing: time, title → Ask: "What time tomorrow, and what should I call the meeting?"
+The clarification should:
+- Be friendly and helpful
+- Ask specifically for the missing parameter(s)
+- Not assume or guess values
 
 Output JSON array:
 [
   {{"query": "incomplete user request", "response": "friendly question asking for missing info", "missing_params": ["param1", "param2"]}}
 ]
 
-Generate {batch_size} diverse clarification examples:"""
+Generate {batch_size} diverse clarification examples using the tools above:"""
 
 
 def build_follow_up_prompt(
@@ -102,17 +113,17 @@ Agent called <tool_name> -> <brief result summary>
 [Current Query]
 <short follow-up question>
 
-EXAMPLES OF GOOD FOLLOW-UP PATTERNS:
-1. "what about the open ones" (filter change)
-2. "show me just 5" (limit change)  
-3. "same but for the other repo" (param swap)
-4. "any from last week?" (time filter)
+COMMON FOLLOW-UP PATTERNS (generic):
+1. "what about the [filter]" (filter change)
+2. "show me just [N]" (limit change)
+3. "same but for [other target]" (param swap)
+4. "any from [time period]?" (time filter)
 5. "what's the most recent?" (sort/limit)
-6. "now search in the body too" (param addition)
+6. "now include [extra field]" (param addition)
 
 OUTPUT FORMAT (JSON array):
 [
-  {{"query": "[Conversation Context]\\nUser asked: find issues in owner/repo\\nAgent called list_issues -> Found 5 issues: #1 Bug, #2 Feature...\\n[Current Query]\\nwhat about the open ones", "tool": "list_issues", "params": {{"owner": "owner", "repo": "repo", "state": "OPEN"}}}}
+  {{"query": "[Conversation Context]\\nUser asked: <prev query>\\nAgent called <tool> -> <result>\\n[Current Query]\\n<follow-up>", "tool": "tool_name", "params": {{"param": "value"}}}}
 ]
 
 RULES:
@@ -120,9 +131,9 @@ RULES:
 2. Carry forward ALL relevant params from the previous query
 3. Apply the modification from the follow-up (filter, limit, sort, etc.)
 4. Use EXACT tool names and valid param values from the list above
-5. ENUM VALUES ARE CASE-SENSITIVE: Use "OPEN"/"CLOSED" exactly as shown, NOT lowercase
+5. ENUM VALUES ARE CASE-SENSITIVE: Use values exactly as shown in the tool list
 
-Generate {batch_size} diverse follow-up examples:"""
+Generate {batch_size} diverse follow-up examples using the tools above:"""
 
 
 def build_refusal_prompt(
@@ -141,10 +152,15 @@ PATTERN:
 1. User asks for something outside the available tools
 2. Assistant politely declines and mentions what they CAN help with
 
-EXAMPLES:
-- User: "Can you book a flight for me?" → "I can't book flights, but I can help you with GitHub, Slack, or scheduling meetings."
-- User: "Send an email to john@example.com" → "I don't have email capabilities, but I can send Slack messages if that helps."
-- User: "What's the weather?" → "I can't check weather, but I can search the web or help with your calendar."
+The refusal should:
+- Be polite and helpful
+- Explain the limitation briefly
+- Redirect to available capabilities (use the tools listed above)
+
+COMMON OUT-OF-SCOPE REQUESTS (adapt to context):
+- Asking to perform actions the tools don't support
+- Requesting integrations not available
+- Asking for general knowledge unrelated to the tools
 
 Output JSON array:
 [
@@ -178,10 +194,10 @@ CATEGORIES TO COVER (mix all types):
    - "That was helpful" → "Glad I could help! Anything else?"
    - "perfect" → "Great! Let me know if you need anything else."
 
-3. CAPABILITY QUESTIONS:
-   - "What can you do?" → "I can help with GitHub issues and Slack. I can list issues, create them, add comments, and send Slack messages. What would you like me to do?"
-   - "What are you?" → "I'm an assistant that helps manage GitHub issues and Slack messages."
-   - "help" → "I'm here to help! I can work with GitHub issues and Slack. What do you need?"
+3. CAPABILITY QUESTIONS (use the actual tools above in responses):
+   - "What can you do?" → Describe the available tools
+   - "What are you?" → Describe yourself based on the context
+   - "help" → List what you can help with
 
 4. ACKNOWLEDGMENTS:
    - "ok" → "Got it! Let me know when you need something."
@@ -196,5 +212,7 @@ Output JSON array:
 [
   {{"query": "casual message", "response": "friendly response"}}
 ]
+
+IMPORTANT: For capability questions, use the ACTUAL tools listed above in your responses.
 
 Generate {batch_size} DIVERSE examples from ALL categories:"""
