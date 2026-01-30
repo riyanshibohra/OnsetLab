@@ -5,9 +5,9 @@
   "source": "https://github.com/korotovsky/slack-mcp-server",
   "package": {
     "type": "binary",
-    "github_repo": "korotovsky/slack-mcp-server",
-    "command": "slack-mcp-server",
-    "args": ["--transport", "stdio"]
+    "name": "slack-mcp-server",
+    "command": "npx",
+    "args": ["-y", "slack-mcp-server", "--transport", "stdio"]
   },
   "auth": {
     "type": "token",
