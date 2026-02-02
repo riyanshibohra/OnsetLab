@@ -51,15 +51,15 @@ class DataGenConfig:
     max_per_tool: int = 75            # Maximum - 3B can handle more with LoRA
     
     # Distribution (must sum to 1.0)
-    single_tool_ratio: float = 0.75   # 75% successful tool calls
-    edge_case_ratio: float = 0.25     # 25% edge cases
+    single_tool_ratio: float = 0.65   # 65% successful tool calls
+    edge_case_ratio: float = 0.35     # 35% edge cases (increased for better "no tool" learning)
     
-    # Edge case breakdown (within the 25%)
-    # IMPORTANT: casual needs higher % because small models default to tool calls
-    clarification_ratio: float = 0.25  # 25% of edge cases = 6.25% total
-    follow_up_ratio: float = 0.15      # 15% of edge cases = 3.75% total
-    refusal_ratio: float = 0.20        # 20% of edge cases = 5% total (invalid tool, out of scope)
-    casual_ratio: float = 0.40         # 40% of edge cases = 10% total (greetings, thanks, questions)
+    # Edge case breakdown (within the 35%)
+    # CRITICAL: 3B models default to calling tools - need lots of "no tool" examples
+    clarification_ratio: float = 0.15  # 15% of edge cases = 5.25% total
+    follow_up_ratio: float = 0.10      # 10% of edge cases = 3.5% total
+    refusal_ratio: float = 0.25        # 25% of edge cases = 8.75% total (can't do this)
+    casual_ratio: float = 0.50         # 50% of edge cases = 17.5% total (greetings, thanks)
     
     # Split ratios
     train_ratio: float = 0.85
@@ -165,12 +165,14 @@ class DataGenerator:
         api_key: str,
         config: DataGenConfig = None,
         system_prompt: str = None,
+        skill: str = None,
     ):
         self.tools = tools
         self.problem_statement = problem_statement
         self.api_key = api_key
         self.config = config or DataGenConfig()
         self.system_prompt = system_prompt
+        self.skill = skill  # Skill document for guided generation
         
         # Auto-detect API provider
         self.api_provider = "anthropic" if api_key.startswith("sk-ant-") else "openai"
@@ -196,11 +198,11 @@ class DataGenerator:
         print(f"{'='*50}")
         print(f"Tools: {len(self.tools)}")
         print(f"Total examples: {targets['total']}")
-        print(f"  - Single-tool: {targets['single_tool']} (75%)")
-        print(f"  - Clarification: {targets['clarification']} (10%)")
-        print(f"  - Follow-up: {targets['follow_up']} (5%)")
-        print(f"  - Refusal: {targets['refusal']} (5%)")
-        print(f"  - Casual: {targets['casual']} (5%)")
+        print(f"  - Single-tool: {targets['single_tool']} (65%)")
+        print(f"  - Clarification: {targets['clarification']} (5%)")
+        print(f"  - Follow-up: {targets['follow_up']} (3.5%)")
+        print(f"  - Refusal: {targets['refusal']} (9%)")
+        print(f"  - Casual: {targets['casual']} (17.5%)")
         print(f"{'='*50}\n")
         
         # Generate each category
@@ -299,7 +301,8 @@ class DataGenerator:
         """Generate batch of single-tool examples."""
         tools_desc = self._format_tools(tools)
         prompt = gen.build_single_tool_prompt(
-            self.problem_statement, tools_desc, self.config.batch_size
+            self.problem_statement, tools_desc, self.config.batch_size,
+            skill=self.skill  # Pass skill for guided generation
         )
         return self._call_llm(prompt, example_type="tool_call")
     
@@ -331,7 +334,8 @@ class DataGenerator:
         """Generate clarification examples - user missing required params."""
         tools_desc = self._format_tools_with_required(tools)
         prompt = gen.build_clarification_prompt(
-            self.problem_statement, tools_desc, self.config.batch_size
+            self.problem_statement, tools_desc, self.config.batch_size,
+            skill=self.skill  # Pass skill for clarification patterns
         )
         return self._call_llm(prompt, example_type="clarification")
     
@@ -578,17 +582,6 @@ class DataGenerator:
         name = tool_name.lower()
         item_id = random.randint(100, 9999)
         
-        # Memory operations (check FIRST before generic patterns)
-        if 'memory' in name:
-            if 'set' in name:
-                return json.dumps({"stored": True, "key": params.get("key")})
-            if 'get' in name:
-                return json.dumps({"key": params.get("key"), "value": "stored_value"})
-            if 'list' in name:
-                return json.dumps({"keys": ["user_name", "project", "preference"]})
-            if 'delete' in name:
-                return json.dumps({"deleted": True, "key": params.get("key")})
-        
         # List/search operations
         if any(x in name for x in ['list', 'search', 'find', 'query']):
             items = [
@@ -666,15 +659,6 @@ class DataGenerator:
         # Sent
         if data.get('sent'):
             return "✓ Sent successfully!"
-        
-        # Memory
-        if data.get('stored'):
-            return f"✓ Saved '{params.get('key')}' to memory."
-        if 'value' in data and 'key' in data:
-            return f"The value for '{data['key']}' is: {data['value']}"
-        if 'keys' in data:
-            keys = data['keys']
-            return f"I have {len(keys)} items in memory: {', '.join(keys)}"
         
         # Default
         return "Done!"
@@ -813,6 +797,7 @@ def generate_training_data(
     output_dir: str = None,
     system_prompt: str = None,
     examples_per_tool: int = 25,
+    skill: str = None,
 ) -> dict:
     """
     Generate training data for single-tool architecture.
@@ -824,6 +809,7 @@ def generate_training_data(
         output_dir: Where to save (optional)
         system_prompt: System prompt for training examples
         examples_per_tool: Target examples per tool (default 25)
+        skill: Skill document for guided generation (optional but recommended)
     
     Returns:
         dict with 'train', 'validation', 'test' lists
@@ -835,7 +821,8 @@ def generate_training_data(
         problem_statement=problem_statement,
         api_key=api_key,
         config=config,
-        system_prompt=system_prompt
+        system_prompt=system_prompt,
+        skill=skill
     )
     
     if output_dir:
@@ -896,11 +883,11 @@ def recommend_dataset_size(num_tools: int) -> dict:
         "using_suggested": {
             "total": targets['total'],
             "breakdown": {
-                "single_tool (75%)": targets['single_tool'],
-                "clarification (10%)": targets['clarification'],
-                "follow_up (5%)": targets['follow_up'],
-                "refusal (5%)": targets['refusal'],
-                "casual (5%)": targets['casual'],
+                "single_tool (65%)": targets['single_tool'],
+                "clarification (5%)": targets['clarification'],
+                "follow_up (3.5%)": targets['follow_up'],
+                "refusal (9%)": targets['refusal'],
+                "casual (17.5%)": targets['casual'],
             },
             "splits": {
                 "train (85%)": int(targets['total'] * config.train_ratio),
@@ -934,11 +921,11 @@ def print_dataset_recommendation(num_tools: int):
     print()
     print("USING SUGGESTED:")
     print(f"  Total: {targets['total']}")
-    print(f"    - Single-tool (75%):   {targets['single_tool']}")
-    print(f"    - Clarification (10%): {targets['clarification']}")
-    print(f"    - Follow-up (5%):      {targets['follow_up']}")
-    print(f"    - Refusal (5%):        {targets['refusal']}")
-    print(f"    - Casual (5%):         {targets['casual']}")
+    print(f"    - Single-tool (65%):   {targets['single_tool']}")
+    print(f"    - Clarification (5%):  {targets['clarification']}")
+    print(f"    - Follow-up (3.5%):    {targets['follow_up']}")
+    print(f"    - Refusal (9%):        {targets['refusal']}")
+    print(f"    - Casual (17.5%):      {targets['casual']}")
     print()
     print("SPLITS:")
     print(f"    - Train (85%):      {int(targets['total'] * config.train_ratio)}")

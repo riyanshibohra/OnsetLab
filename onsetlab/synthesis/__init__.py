@@ -8,6 +8,7 @@ Single-Tool Architecture:
 - Strong clarification handling
 - 75% single-tool, 25% edge cases
 - Concise prompts optimized for 3B models
+- Skill-guided generation for better format accuracy
 """
 
 # Prompt generation (concise, template-based)
@@ -26,6 +27,9 @@ from .data_generator import (
     print_dataset_recommendation,
 )
 
+# Skill generation (for guided data generation)
+from .skill_generator import SkillGenerator
+
 __all__ = [
     # Prompt generation (no LLM needed)
     "generate_prompt_for_3b",
@@ -37,4 +41,6 @@ __all__ = [
     "generate_training_data",
     "recommend_dataset_size",
     "print_dataset_recommendation",
+    # Skill generation
+    "SkillGenerator",
 ]

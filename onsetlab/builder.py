@@ -311,6 +311,8 @@ class AgentBuilder:
         api_servers: list = None,  # List[APIServerConfig] for direct API services
         api_key: str = None,
         config: BuildConfig = None,
+        system_prompt: str = None,  # Pre-generated system prompt (from skill)
+        skill: str = None,          # Skill document for guided data generation
     ):
         """
         Initialize the agent builder.
@@ -322,6 +324,8 @@ class AgentBuilder:
             api_servers: List of APIServerConfig for direct REST API services
             api_key: OpenAI or Anthropic API key for synthesis
             config: Optional BuildConfig for customization
+            system_prompt: Pre-generated system prompt (from meta-agent skill generation)
+            skill: Skill document for guided data generation (improves quality)
         
         Note:
             You can use mcp_servers, api_servers, or both. At least one must be provided.
@@ -332,6 +336,8 @@ class AgentBuilder:
         self.api_servers = api_servers or []
         self.api_key = api_key
         self.config = config or BuildConfig()
+        self.provided_system_prompt = system_prompt  # User-provided system prompt
+        self.skill = skill  # Skill for guided data generation
         
         # Validate at least one server type is provided
         if not self.mcp_servers and not self.api_servers:
@@ -460,15 +466,57 @@ class AgentBuilder:
         return agent
     
     def _step_1_generate_prompt(self):
-        """Step 1: Generate system prompt based on model type."""
+        """Step 1: Generate system prompt (and skill if API key available)."""
         print("\n📝 Step 1: Generating system prompt...")
         
-        # Get model info to determine prompt format
+        # Use provided system prompt if available
+        if self.provided_system_prompt:
+            self._system_prompt = self.provided_system_prompt
+            print(f"   ✅ Using provided system prompt")
+            print(f"   📄 Prompt: {len(self._system_prompt)} chars")
+            return
+        
+        # Try to generate skill-based prompt if API key is available
+        if self.api_key and not self.skill:
+            try:
+                from .synthesis.skill_generator import SkillGenerator
+                
+                print(f"   🧠 Generating skill for {len(self.tools)} tools...")
+                generator = SkillGenerator(api_key=self.api_key)
+                
+                # Convert tools to dict format if needed
+                tools_list = []
+                for t in self.tools:
+                    if hasattr(t, 'to_dict'):
+                        tools_list.append(t.to_dict())
+                    elif isinstance(t, dict):
+                        tools_list.append(t)
+                    else:
+                        tools_list.append({
+                            'name': getattr(t, 'name', ''),
+                            'description': getattr(t, 'description', ''),
+                            'parameters': getattr(t, 'parameters', {}),
+                            'required_params': getattr(t, 'required_params', [])
+                        })
+                
+                self.skill, self._system_prompt = generator.generate(
+                    server_name="Agent",
+                    server_description=self.problem_statement,
+                    tools=tools_list
+                )
+                print(f"   ✅ Skill generated ({len(self.skill)} chars)")
+                print(f"   📄 System prompt: {len(self._system_prompt)} chars")
+                return
+                
+            except Exception as e:
+                print(f"   ⚠️ Skill generation failed: {e}")
+                print(f"   📋 Falling back to default prompt")
+        
+        # Fallback: Use default prompt format
         model_key = self.config.base_model
         model_info = SUPPORTED_MODELS.get(model_key, {})
         tool_format = model_info.get("tool_format", "qwen")
         
-        # Use appropriate prompt format based on model
         from .synthesis.prompts import get_default_prompt
         self._system_prompt = get_default_prompt(
             problem_statement=self.problem_statement,
@@ -476,12 +524,8 @@ class AgentBuilder:
             model_format=tool_format
         )
         
-        pretrained = model_info.get("pretrained_on_tools", False)
-        if pretrained:
-            print(f"   ✅ Using {tool_format} format (model pre-trained on tools)")
-        else:
-            print(f"   ✅ Using {tool_format} format")
-        print(f"   📄 Prompt: {len(self._system_prompt)} chars, ~{len(self._system_prompt.split())} words")
+        print(f"   ✅ Using default {tool_format} format")
+        print(f"   📄 Prompt: {len(self._system_prompt)} chars")
     
     def _load_existing_data(self):
         """Load existing data from a previous run (skip generation steps)."""
@@ -556,13 +600,18 @@ class AgentBuilder:
         
         # Create data generator
         # CRITICAL: Pass the system prompt so it's included in training examples!
+        # Pass skill for guided data generation (improves format correctness)
         generator = DataGenerator(
             tools=self.tools,
             problem_statement=self.problem_statement,
             api_key=self.api_key,
             config=gen_config,
             system_prompt=self._system_prompt,  # Include system prompt in training data!
+            skill=self.skill,  # Skill for guided generation (from meta-agent)
         )
+        
+        if self.skill:
+            print(f"   📋 Using skill for guided data generation ({len(self.skill)} chars)")
         
         # Generate and save
         output_dir = os.path.join(self.config.output_dir, "data")

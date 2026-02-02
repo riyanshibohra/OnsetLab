@@ -181,7 +181,6 @@ _ACTION_VERBS = {
     "delete": ["delete", "remove"],
     "send": ["send", "post", "message", "notify", "tell"],
     "comment": ["comment", "reply", "respond"],
-    "memory": ["remember", "save", "recall", "stored", "memory", "favorite"],
 }
 # Params whose values are system/enum (not user-provided from query)
 _SYSTEM_PARAMS = frozenset(["id", "status", "state", "type", "limit", "page"])

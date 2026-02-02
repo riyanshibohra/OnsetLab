@@ -239,7 +239,6 @@ class AgentPackager:
                     "calendar": ["CREDENTIALS_PATH"],
                     "tavily": ["TAVILY_API_KEY"],
                     "filesystem": [],  # No auth needed
-                    "memory": [],  # Built-in, no auth
                 }
                 env_vars = env_var_defaults.get(name.lower(), [])
             
@@ -360,8 +359,6 @@ class AgentPackager:
                         elif server_name == "github" and any(x in tool_name for x in ["issue", "repo", "pull", "commit", "branch"]):
                             server_tools.append(tool_name)
                         elif server_name == "slack" and any(x in tool_name for x in ["channel", "message", "conversation", "user"]):
-                            server_tools.append(tool_name)
-                        elif server_name == "memory" and "memory" in tool_name:
                             server_tools.append(tool_name)
                     
                     if server_tools:

@@ -57,9 +57,17 @@ To use a tool:
 {{"tool": "name", "parameters": {{"key": "value"}}}}
 </tool_call>
 
+CRITICAL - When NOT to use tools:
+- Greetings (hi, hey, hello): Just respond friendly - "Hey! How can I help?"
+- Thanks (thanks, perfect, great): "You're welcome!" - no tool needed
+- Questions about me: Explain what you can do - no tool needed
+- If you can't do it: Say so nicely - no tool needed
+- General chat: Respond normally - no tool needed
+
+ONLY use tools when user explicitly asks to DO something with their data.
+
 Rules:
-- Use parameter values exactly as the user says them (names, titles, etc.)
-- For greetings, thanks, or questions about me: respond in plain text, no tool
+- Use parameter values exactly as user says them
 - If required info is missing: ask, don't guess"""
     
     return prompt

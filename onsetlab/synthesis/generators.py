@@ -5,7 +5,8 @@ Builds prompts for single-tool, clarification, follow-up, refusal, and casual
 example generation. Used by DataGenerator; no API calls here—pure prompt construction.
 
 IMPORTANT: All prompts are GENERIC - no hardcoded service names (GitHub, Slack, etc.)
-The actual tools are passed in via tools_desc which is dynamically built.
+When a skill is provided, it guides the generation with exact formats and examples.
+Otherwise, tools_desc is used (fallback for backward compatibility).
 """
 
 
@@ -13,8 +14,41 @@ def build_single_tool_prompt(
     problem_statement: str,
     tools_desc: str,
     batch_size: int,
+    skill: str = None,
 ) -> str:
     """Build prompt for generating single-tool (successful tool call) examples."""
+    
+    # If skill is provided, use it for detailed guidance
+    if skill:
+        return f"""Generate {batch_size} training examples for an AI assistant.
+
+Context: {problem_statement}
+
+=== SKILL REFERENCE (FOLLOW THIS EXACTLY) ===
+{skill}
+=== END SKILL REFERENCE ===
+
+GENERATION RULES:
+1. Use the EXACT tool names, parameter names, and formats shown in the skill above
+2. Use the "Correct Examples" from the skill as TEMPLATES for your generations
+3. Use the "Triggers" phrases as inspiration for user queries
+4. AVOID the patterns shown in "Wrong Examples"
+5. The USER QUERY must CONTAIN all required parameter values explicitly
+6. DO NOT make up values - extract from the user query
+
+CRITICAL - PARAMETER FORMATS:
+- Follow the EXACT formats shown in the skill's parameter tables
+- For OBJECT parameters (like "event"), use the EXACT nested structure shown
+- Copy the format from the skill's correct examples
+
+Output JSON array:
+[
+  {{"query": "user request", "tool": "tool_name", "parameters": {{...}}}}
+]
+
+Generate {batch_size} diverse examples following the skill's formats exactly:"""
+    
+    # Fallback: no skill provided, use basic prompt
     return f"""Generate {batch_size} training examples for an AI assistant.
 
 Context: {problem_statement}
@@ -43,6 +77,12 @@ PATTERN FOR GOOD EXAMPLES:
 - Tool parameters are extracted directly from what the user said
 - No guessing or placeholder values
 
+DATE-RELATIVE QUERIES (IMPORTANT):
+For tools that need dates, include a [Current: DATE] context in the query:
+- "[Current: Monday, February 10, 2025] what's on my calendar today" → Use 2025-02-10 for date params
+- "[Current: Friday, March 15, 2024] meetings this week" → Use dates relative to that Friday
+- The model MUST learn to extract dates from the [Current: ...] context
+
 PATTERN FOR BAD EXAMPLES (DO NOT GENERATE):
 - User query is vague and missing required info
 - Parameters contain made-up values not in the query
@@ -59,6 +99,9 @@ Output JSON array (note: object params use nested dicts):
   {{"query": "user request", "tool": "tool_name", "parameters": {{"stringParam": "value", "objectParam": {{"nestedKey": "nestedValue"}}}}}}
 ]
 
+For tools that require dates, include [Current: DATE] context in query and extract the date for params.
+Example pattern: "[Current: Monday, Feb 10, 2025] <request about today/this week>" → use 2025-02-10
+
 Generate {batch_size} diverse examples where the user query contains ALL required information:"""
 
 
@@ -66,15 +109,28 @@ def build_clarification_prompt(
     problem_statement: str,
     tools_required_desc: str,
     batch_size: int,
+    skill: str = None,
 ) -> str:
     """Build prompt for clarification examples (user missing required params)."""
+    
+    # If skill provided, use its clarification patterns
+    skill_section = ""
+    if skill:
+        skill_section = f"""
+=== SKILL REFERENCE (for clarification patterns) ===
+{skill}
+=== END SKILL REFERENCE ===
+
+Use the "Clarification" sections from the skill above to guide what questions to ask.
+"""
+    
     return f"""Generate {batch_size} examples where user wants to use a tool but is MISSING required information.
 
 Context: {problem_statement}
 
 TOOLS AND THEIR REQUIRED PARAMS:
 {tools_required_desc}
-
+{skill_section}
 PATTERN:
 1. User makes a request but leaves out 1-2 required parameters
 2. Assistant asks a SPECIFIC question to get the missing info
@@ -156,18 +212,35 @@ The refusal should:
 - Be polite and helpful
 - Explain the limitation briefly
 - Redirect to available capabilities (use the tools listed above)
+- NEVER include "I'm sorry, I can't help with that" alone - always explain WHY and what you CAN do
 
-COMMON OUT-OF-SCOPE REQUESTS (adapt to context):
-- Asking to perform actions the tools don't support
-- Requesting integrations not available
-- Asking for general knowledge unrelated to the tools
+CATEGORIES OF OUT-OF-SCOPE REQUESTS:
+
+1. REAL-TIME INFO (can't provide current time/weather/news):
+   - "what time is it" → "I don't have access to the current time. What would you like help with?"
+   - "what's the weather" → "I can't check weather, but I can help with [mention your actual tools]"
+   - "what's in the news" → "I don't have access to news, but I can help with [your tools]"
+
+2. ACTIONS NOT SUPPORTED:
+   - Asking to do things the tools can't do
+   - Requesting features that don't exist
+
+3. WRONG DOMAIN:
+   - General knowledge questions unrelated to your tools
+   - Math, coding, trivia that isn't tool-related
+
+4. VAGUE REQUESTS THAT NEED CLARIFICATION:
+   - "do that thing" → "I'd be happy to help! Could you be more specific about what you'd like me to do?"
+   - "change it" → "Sure! What would you like me to change?"
 
 Output JSON array:
 [
-  {{"query": "out of scope request", "response": "polite decline mentioning available capabilities"}}
+  {{"query": "out of scope request", "response": "polite decline WITH explanation of what you CAN do"}}
 ]
 
-Generate {batch_size} diverse refusal examples:"""
+IMPORTANT: Responses must be HELPFUL, not just apologetic. Always redirect to capabilities.
+
+Generate {batch_size} diverse refusal examples covering ALL categories above:"""
 
 
 def build_casual_prompt(
@@ -179,40 +252,50 @@ def build_casual_prompt(
 
 The agent has these tools: {tool_list_str}
 
-CRITICAL: These are messages where the user is NOT asking to DO something.
-The assistant should respond with friendly text, NO tool calls.
+CRITICAL RULES:
+1. These are messages where the user is NOT asking to DO something
+2. Respond with FRIENDLY, WARM text - never apologize or refuse
+3. NEVER use phrases like "I can't help with that" - these are friendly exchanges!
+4. Keep responses SHORT and conversational (1-2 sentences max)
 
-CATEGORIES TO COVER (mix all types):
+CATEGORIES (generate equal mix):
 
-1. GREETINGS:
-   - "Hey!" → "Hey there! How can I help you today?"
-   - "Good morning" → "Good morning! What can I help you with?"
-   - "hi" → "Hi! What can I do for you?"
+1. GREETINGS (40% of examples) - Always respond warmly:
+   - "hey" → "Hey! What can I help you with?"
+   - "hi" → "Hi there! How can I assist you today?"
+   - "hello" → "Hello! What can I do for you?"
+   - "hey there" → "Hey! Ready to help. What do you need?"
+   - "good morning" → "Good morning! What can I help with today?"
+   - "sup" → "Hey! What's up? How can I help?"
+   - "yo" → "Hey! What do you need?"
+   - "hiya" → "Hi! What can I do for you?"
 
-2. THANKS:
-   - "Thanks!" → "You're welcome! Let me know if you need anything else."
-   - "That was helpful" → "Glad I could help! Anything else?"
+2. THANKS (20% of examples):
+   - "thanks" → "You're welcome! Need anything else?"
+   - "thank you" → "Happy to help! Let me know if you need more."
+   - "thanks a lot" → "Anytime! What else can I do?"
    - "perfect" → "Great! Let me know if you need anything else."
+   - "awesome" → "Glad that worked! Anything else?"
+   - "that helps" → "Great! Let me know what else you need."
 
-3. CAPABILITY QUESTIONS (use the actual tools above in responses):
-   - "What can you do?" → Describe the available tools
-   - "What are you?" → Describe yourself based on the context
-   - "help" → List what you can help with
+3. ACKNOWLEDGMENTS (20% of examples):
+   - "ok" → "Sounds good! Let me know when you need something."
+   - "got it" → "Great! What's next?"
+   - "I see" → "Yep! Anything else I can help with?"
+   - "cool" → "Nice! What else can I do?"
+   - "sounds good" → "Perfect! Let me know if you need anything."
+   - "alright" → "Great! What else?"
 
-4. ACKNOWLEDGMENTS:
-   - "ok" → "Got it! Let me know when you need something."
-   - "I see" → "Yep! Anything else?"
-   - "cool" → "Glad that works! What's next?"
-
-5. CONFUSION:
-   - "I don't understand" → "No problem! What would you like me to explain?"
-   - "wait what" → "Sorry if I was unclear. How can I help?"
+4. CAPABILITY QUESTIONS (20% of examples) - Mention actual tools:
+   - "what can you do" → Briefly describe using {tool_list_str}
+   - "help" → List your capabilities using the tools above
+   - "what are you" → Describe yourself as an assistant with the tools above
 
 Output JSON array:
 [
-  {{"query": "casual message", "response": "friendly response"}}
+  {{"query": "casual message", "response": "friendly SHORT response"}}
 ]
 
-IMPORTANT: For capability questions, use the ACTUAL tools listed above in your responses.
+NEVER INCLUDE APOLOGIES OR REFUSALS. These are friendly exchanges.
 
-Generate {batch_size} DIVERSE examples from ALL categories:"""
+Generate {batch_size} DIVERSE examples with 40% greetings, 20% thanks, 20% acknowledgments, 20% capability questions:"""

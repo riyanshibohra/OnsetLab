@@ -219,70 +219,6 @@ class MCPClient:
 
 
 # ============================================================
-# BUILT-IN MEMORY - Persistent key-value store
-# ============================================================
-
-class Memory:
-    """
-    Simple persistent memory for the agent.
-    
-    Stores key-value pairs in a JSON file that persists across sessions.
-    Automatically included in every agent - no MCP server needed.
-    """
-    
-    def __init__(self, storage_path: str = None):
-        if storage_path is None:
-            storage_path = os.path.join(SCRIPT_DIR, ".agent_memory.json")
-        self.storage_path = storage_path
-        self._data = self._load()
-    
-    def _load(self) -> dict:
-        """Load memory from disk."""
-        if os.path.exists(self.storage_path):
-            try:
-                with open(self.storage_path, "r") as f:
-                    return json.load(f)
-            except:
-                return {}
-        return {}
-    
-    def _save(self):
-        """Save memory to disk."""
-        with open(self.storage_path, "w") as f:
-            json.dump(self._data, f, indent=2)
-    
-    def set(self, key: str, value: str) -> dict:
-        """Store a value."""
-        self._data[key] = value
-        self._save()
-        return {"status": "success", "message": f"Stored '{key}' = '{value}'"}
-    
-    def get(self, key: str) -> dict:
-        """Retrieve a value."""
-        if key in self._data:
-            return {"status": "success", "key": key, "value": self._data[key]}
-        return {"status": "not_found", "message": f"Key '{key}' not found in memory"}
-    
-    def delete(self, key: str) -> dict:
-        """Remove a value."""
-        if key in self._data:
-            del self._data[key]
-            self._save()
-            return {"status": "success", "message": f"Deleted '{key}'"}
-        return {"status": "not_found", "message": f"Key '{key}' not found"}
-    
-    def list_keys(self) -> dict:
-        """List all stored keys."""
-        if self._data:
-            return {"status": "success", "keys": list(self._data.keys()), "count": len(self._data)}
-        return {"status": "empty", "message": "No items stored in memory"}
-
-
-# Built-in memory tools (always available)
-BUILTIN_MEMORY_TOOLS = {"memory_set", "memory_get", "memory_delete", "memory_list"}
-
-
-# ============================================================
 # TOOL MANAGER - Routes to MCP servers or API functions
 # ============================================================
 
@@ -291,7 +227,6 @@ class ToolManager:
     Manages both MCP servers and direct API tools.
     
     Routes tool calls to:
-    - Built-in tools (memory) - always available
     - MCP servers (via JSON-RPC) for services with MCP support
     - API functions (via api_tools.py) for direct REST API services
     """
@@ -303,9 +238,6 @@ class ToolManager:
         self.api_tools = set(config.get("api_tools", []))
         self.mcp_tools = set(config.get("mcp_tools", []))
         self.allowed_tools = set(config.get("allowed_tools", []))
-        
-        # Built-in memory (always available)
-        self.memory = Memory()
     
     async def start_all(self):
         """Start all configured servers."""
@@ -342,16 +274,11 @@ class ToolManager:
         Route tool call to correct backend (MCP or API).
         
         Order of routing:
-        1. Check if tool is a built-in (memory) -> handle directly
-        2. Check if tool is allowed (whitelist)
-        3. Check if tool is an API tool -> call via api_tools.py
-        4. Check if tool is an MCP tool -> call via MCP server
-        5. Fallback: try MCP servers
+        1. Check if tool is allowed (whitelist)
+        2. Check if tool is an API tool -> call via api_tools.py
+        3. Check if tool is an MCP tool -> call via MCP server
+        4. Fallback: try MCP servers
         """
-        
-        # Check if this is a built-in memory tool (always available)
-        if tool_name in BUILTIN_MEMORY_TOOLS:
-            return self._call_memory_tool(tool_name, params)
         
         # Validate tool is allowed
         if self.allowed_tools and tool_name not in self.allowed_tools:
@@ -368,23 +295,6 @@ class ToolManager:
         
         # Route to MCP
         return await self._call_mcp_tool(tool_name, params)
-    
-    def _call_memory_tool(self, tool_name: str, params: dict) -> str:
-        """Call a built-in memory tool."""
-        try:
-            if tool_name == "memory_set":
-                result = self.memory.set(params.get("key", ""), params.get("value", ""))
-            elif tool_name == "memory_get":
-                result = self.memory.get(params.get("key", ""))
-            elif tool_name == "memory_delete":
-                result = self.memory.delete(params.get("key", ""))
-            elif tool_name == "memory_list":
-                result = self.memory.list_keys()
-            else:
-                result = {"error": f"Unknown memory tool: {tool_name}"}
-            return json.dumps(result, indent=2)
-        except Exception as e:
-            return json.dumps({"error": str(e)})
     
     def _call_api_tool(self, tool_name: str, params: dict) -> str:
         """Call an API tool (sync, runs in thread)."""
@@ -996,6 +906,13 @@ def format_conversation_context(history: list, max_turns: int = 5) -> str:
     return "\n".join(context_lines)
 
 
+def get_current_datetime_context() -> str:
+    """Get current date/time context to inject into queries."""
+    from datetime import datetime
+    now = datetime.now()
+    return f"[Current: {now.strftime('%A, %B %d, %Y')} at {now.strftime('%I:%M %p')}]"
+
+
 async def run_agent(tools: ToolManager, model, query: str, conversation_history: list = None) -> tuple:
     """
     Run the agentic loop with MCP + API tool execution and loop detection.
@@ -1009,16 +926,15 @@ async def run_agent(tools: ToolManager, model, query: str, conversation_history:
     Returns:
         Tuple of (response_text, tool_results_list)
     """
-    # Inject known context from memory (channel IDs, repo names, etc.)
-    # This helps the model use correct values even if context overflowed
-    known_context = get_context_injection(tools.memory)
+    # Inject current date/time so model knows what "today" means
+    datetime_context = get_current_datetime_context()
     
     # Build context-aware query if we have history
     if conversation_history:
         context = format_conversation_context(conversation_history)
-        augmented_query = f"{known_context}{context}\n{query}"
+        augmented_query = f"{datetime_context}\n{context}\n{query}"
     else:
-        augmented_query = f"{known_context}{query}" if known_context else query
+        augmented_query = f"{datetime_context}\n{query}"
     
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -1076,12 +992,6 @@ async def run_agent(tools: ToolManager, model, query: str, conversation_history:
                 })
                 continue
             
-            # Auto-extract and save important entities to memory
-            # This helps the model remember channel IDs, repo names, etc.
-            extracted = extract_entities(tool_name, result, tools.memory)
-            if extracted:
-                print(f"💾 Saved to memory: {list(extracted.keys())}")
-            
             # Track tool result for conversation history
             turn_tool_results.append({
                 "tool": tool_name,
@@ -1103,161 +1013,6 @@ async def run_agent(tools: ToolManager, model, query: str, conversation_history:
             return response, turn_tool_results
     
     return "Max iterations reached. The agent made too many tool calls without providing a final answer.", turn_tool_results
-
-
-def extract_entities(tool_name: str, result: str, memory: 'Memory') -> dict:
-    """
-    Auto-extract name→ID pairs from tool results and save to memory.
-    
-    Handles both JSON and CSV formats.
-    Saves as entity_{name} = {id} for later reference (e.g., entity_#social = C097U9FBMG8).
-    """
-    extracted = {}
-    
-    # Try CSV format first (Slack returns CSV)
-    if result and "," in result and "\n" in result:
-        lines = result.strip().split("\n")
-        if len(lines) >= 2:
-            # Check if first line looks like a header
-            header = lines[0].split(",")
-            header_lower = [h.lower().strip() for h in header]
-            
-            # Look for ID and Name columns
-            id_idx = None
-            name_idx = None
-            for i, h in enumerate(header_lower):
-                if h == "id" or h.endswith("_id"):
-                    id_idx = i
-                elif h in ("name", "channel", "title", "username"):
-                    name_idx = i
-            
-            if id_idx is not None and name_idx is not None:
-                # Determine entity type from header (channel, user, repo, etc.)
-                # Use the name column header to infer type
-                name_header = header[name_idx].lower().strip()
-                if "channel" in name_header or header_lower[id_idx].startswith("c"):
-                    entity_type = "channel"
-                elif "user" in name_header:
-                    entity_type = "user"
-                elif "repo" in name_header:
-                    entity_type = "repo"
-                else:
-                    entity_type = "entity"  # Generic fallback
-                
-                # Parse CSV rows
-                for line in lines[1:]:
-                    if not line.strip():
-                        continue
-                    cols = line.split(",")
-                    if len(cols) > max(id_idx, name_idx):
-                        id_val = cols[id_idx].strip()
-                        name_val = cols[name_idx].strip()
-                        if id_val and name_val:
-                            # Clean up name (remove # prefix for storage key)
-                            clean_name = name_val.lstrip("#").lower().replace(" ", "_").replace("-", "_")[:30]
-                            key = f"{entity_type}_{clean_name}"
-                            memory.set(key, id_val)
-                            extracted[key] = id_val
-                
-                if extracted:
-                    return extracted
-    
-    # Try JSON format
-    try:
-        data = json.loads(result) if isinstance(result, str) else result
-    except:
-        return extracted
-    
-    def find_name_id_pairs(obj, prefix=""):
-        """Recursively find objects with name+id pairs."""
-        pairs = []
-        
-        if isinstance(obj, dict):
-            # Check if this object has both name-like and id-like fields
-            id_val = None
-            name_val = None
-            
-            for key, val in obj.items():
-                key_lower = key.lower()
-                if isinstance(val, str):
-                    # ID fields: id, channel_id, repo_id, etc.
-                    if key_lower == "id" or key_lower.endswith("_id"):
-                        id_val = val
-                    # Name fields: name, channel_name, title, etc.
-                    elif key_lower in ("name", "title", "channel_name", "repo_name", "username"):
-                        name_val = val
-            
-            if id_val and name_val:
-                pairs.append((name_val, id_val))
-            
-            # Recurse into nested objects
-            for key, val in obj.items():
-                pairs.extend(find_name_id_pairs(val, prefix=key))
-        
-        elif isinstance(obj, list):
-            for item in obj[:10]:  # Limit to first 10 items
-                pairs.extend(find_name_id_pairs(item, prefix))
-        
-        return pairs
-    
-    # Find all name→id pairs in the result
-    pairs = find_name_id_pairs(data)
-    
-    for name, id_val in pairs[:10]:  # Save up to 10 entities
-        # Normalize the key: entity_{sanitized_name}
-        safe_name = str(name).lower().replace(" ", "_").replace("#", "")[:30]
-        key = f"entity_{safe_name}"
-        memory.set(key, id_val)
-        extracted[name] = id_val
-    
-    return extracted
-
-
-def get_context_injection(memory: 'Memory') -> str:
-    """
-    Build a context string from memory to inject into queries.
-    Uses stored channels, entities, and user preferences.
-    """
-    keys = memory.list_keys()
-    if not keys:
-        return ""
-    
-    context_parts = []
-    
-    # Group by entity type (channel_, user_, repo_, entity_)
-    entity_types = {}
-    user_keys = []
-    
-    for key in keys:
-        val = memory.get(key)
-        if not val:
-            continue
-            
-        # Check known prefixes
-        if key.startswith("channel_"):
-            entity_types.setdefault("Slack channels", []).append((key.replace("channel_", "#"), val))
-        elif key.startswith("user_"):
-            entity_types.setdefault("Users", []).append((key.replace("user_", ""), val))
-        elif key.startswith("repo_"):
-            entity_types.setdefault("Repos", []).append((key.replace("repo_", ""), val))
-        elif key.startswith("entity_"):
-            entity_types.setdefault("IDs", []).append((key.replace("entity_", ""), val))
-        else:
-            user_keys.append((key, val))
-    
-    # Format each entity type
-    for type_name, items in entity_types.items():
-        if items:
-            items_str = ", ".join([f"{name}={val}" for name, val in items[:10]])
-            context_parts.append(f"{type_name}: {items_str}")
-    
-    # User-set values
-    for key, val in user_keys[:10]:
-        context_parts.append(f"{key}: {val}")
-    
-    if context_parts:
-        return "\n[Known Context]\n" + "\n".join(context_parts[:15]) + "\n"
-    return ""
 
 
 async def interactive_mode(tools: ToolManager, model):
