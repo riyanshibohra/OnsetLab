@@ -14,9 +14,6 @@ def load_registry(state: MetaAgentState) -> dict:
     """
     Load tools from registry files for selected services.
     
-    Always includes memory (built-in), plus any services selected
-    by the user in the UI.
-    
     Args:
         state: Current MetaAgentState
         
@@ -38,21 +35,6 @@ def load_registry(state: MetaAgentState) -> dict:
     mcp_servers = []
     registry_services = []
     errors = []
-    
-    # Always load memory (built-in)
-    memory_path = registry_dir / "_builtin_memory.json"
-    if memory_path.exists():
-        with open(memory_path, 'r') as f:
-            memory_data = json.load(f)
-            # Add service context to memory tools
-            for tool in memory_data["tools"]:
-                tool["_service"] = "memory"
-                tool["_builtin"] = True  # Mark as built-in (always include)
-            all_tools.extend(memory_data["tools"])
-            print(f"   ✅ Memory (built-in): {len(memory_data['tools'])} tools")
-            registry_services.append("memory")
-    else:
-        errors.append("Built-in memory registry not found!")
     
     # Load each identified service
     for service in identified_services:

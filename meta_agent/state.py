@@ -74,7 +74,15 @@ class MetaAgentState(TypedDict, total=False):
     # After analyze_problem
     identified_services: list[str]           # ["github", "slack", "google_calendar"]
     
-    # After load_registry
+    # After discover_servers (NEW - from MCP Registry)
+    discovered_servers: list[dict]           # Servers found in MCP Registry
+    discovery_errors: list[str]              # Services not found
+    
+    # After verify_servers (NEW - verification results)
+    verified_servers: list[dict]             # Verified server configs with scores
+    verification_summary: str                # Summary of verification
+    
+    # After load_registry (legacy or fallback)
     all_tools: list[dict]                    # All tools from registry files
     mcp_servers: list[dict]                  # MCP server configs from registry
     registry_services: list[str]             # Successfully loaded services
@@ -88,6 +96,10 @@ class MetaAgentState(TypedDict, total=False):
     tools_to_add: list[str]                  # Tool names to add
     tools_to_remove: list[str]               # Tool names to remove
     final_tools: list[dict]                  # User-approved final tool list
+    
+    # Skill (for guided data generation)
+    full_skill: str                          # Detailed skill document for data generation
+    condensed_rules: str                     # Short rules for system prompt (~200 tokens)
     
     # Output artifacts
     token_guides: list[TokenGuide]
@@ -127,7 +139,13 @@ def create_initial_state(
         "anthropic_api_key": anthropic_api_key,
         "identified_services": selected_services,  # From UI selection
         
-        # Initialize
+        # Discovery (NEW)
+        "discovered_servers": [],
+        "discovery_errors": [],
+        "verified_servers": [],
+        "verification_summary": "",
+        
+        # Initialize (legacy)
         "all_tools": [],
         "mcp_servers": [],
         "registry_services": [],
@@ -139,6 +157,10 @@ def create_initial_state(
         "tools_to_add": [],
         "tools_to_remove": [],
         "final_tools": [],
+        
+        # Skill
+        "full_skill": "",
+        "condensed_rules": "",
         
         # Output
         "token_guides": [],

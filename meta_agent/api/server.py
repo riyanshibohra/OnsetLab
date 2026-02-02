@@ -2,7 +2,8 @@
 Meta-Agent FastAPI Server
 =========================
 REST API for the OnsetLab meta-agent. Handles:
-- Loading services/tools from registry
+- Dynamic MCP server discovery from official registry
+- Loading services/tools from curated registry (fallback)
 - Generating notebooks from selected tools
 """
 
@@ -16,6 +17,14 @@ from pydantic import BaseModel
 
 # Get registry path
 REGISTRY_PATH = Path(__file__).parent.parent / "registry"
+
+# Import discovery modules
+from meta_agent.nodes.discover_servers import (
+    fetch_all_servers,
+    search_registry_for_service,
+    extract_server_config
+)
+from meta_agent.nodes.verify_server import verify_single_server
 
 app = FastAPI(
     title="OnsetLab Meta-Agent API",
@@ -60,17 +69,46 @@ class ServiceWithTools(BaseModel):
     auth: dict
 
 
+# Discovery Models (NEW)
+class DiscoverRequest(BaseModel):
+    services: list[str]  # Service names to discover (e.g., ["github", "slack"])
+
+
+class DiscoveredServer(BaseModel):
+    service: str
+    name: str
+    description: str
+    version: str
+    install_type: Optional[str] = None  # "npm" | "docker" | "remote"
+    install_command: Optional[str] = None
+    remote_url: Optional[str] = None
+    env_vars: list[str] = []
+    verified: bool = False
+    score: int = 0
+    tools_found: int = 0
+
+
+class DiscoverResponse(BaseModel):
+    success: bool
+    servers: list[DiscoveredServer] = []
+    not_found: list[str] = []
+    error: Optional[str] = None
+
+
 class GenerateRequest(BaseModel):
     problem_statement: str
     selected_services: list[str]
     selected_tools: dict[str, list[str]]  # service_id -> [tool_names]
     anthropic_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None  # For skill generation
 
 
 class GenerateResponse(BaseModel):
     success: bool
     notebook_json: Optional[str] = None
     notebook_url: Optional[str] = None
+    full_skill: Optional[str] = None      # Generated skill (for preview)
+    condensed_rules: Optional[str] = None  # System prompt (for preview)
     error: Optional[str] = None
 
 
@@ -80,11 +118,7 @@ class GenerateResponse(BaseModel):
 
 def load_registry_file(service_id: str) -> dict:
     """Load a service's registry JSON file."""
-    # Handle memory specially
-    if service_id == "memory":
-        file_path = REGISTRY_PATH / "_builtin_memory.json"
-    else:
-        file_path = REGISTRY_PATH / f"{service_id}.json"
+    file_path = REGISTRY_PATH / f"{service_id}.json"
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"Service '{service_id}' not found")
@@ -98,13 +132,15 @@ def get_all_services() -> list[dict]:
     services = []
     
     for file_path in REGISTRY_PATH.glob("*.json"):
+        # Skip hidden/internal files
+        if file_path.stem.startswith("_"):
+            continue
+            
         try:
             with open(file_path, "r") as f:
                 data = json.load(f)
             
             service_id = file_path.stem
-            if service_id == "_builtin_memory":
-                service_id = "memory"
             
             services.append({
                 "id": service_id,
@@ -139,6 +175,8 @@ def generate_notebook_standalone(
     problem_statement: str,
     mcp_servers: list[dict],
     tool_schemas: list[dict],
+    full_skill: str = None,
+    condensed_rules: str = None,
 ) -> str:
     """Generate a Colab notebook from the given configuration."""
     
@@ -325,16 +363,20 @@ def generate_notebook_standalone(
     
     cells.append(create_notebook_cell("code", servers_code))
     
-    # Cell 7: Build
+    # NOTE: Skill generation is now handled internally by AgentBuilder
+    # No need to show skill/system_prompt cells to the user
+    section_num = 6
+    
+    # Cell 6: Build
     cells.append(create_notebook_cell("markdown", [
-        "## 6️⃣ Build Your Agent\n",
+        f"## {section_num}️⃣ Build Your Agent\n",
         "\n",
         "This will generate training data and fine-tune the model (~15-20 min):"
     ]))
     
     escaped_problem = problem_statement.replace('"', '\\"').replace('\n', '\\n')
     
-    cells.append(create_notebook_cell("code", [
+    build_code = [
         "from onsetlab import AgentBuilder, BuildConfig\n",
         "import os\n",
         "\n",
@@ -355,12 +397,16 @@ def generate_notebook_standalone(
         "    config=config,\n",
         ")\n",
         "\n",
+        "# Build the agent (skill generation happens automatically inside!)\n",
         "agent = builder.build()"
-    ]))
+    ]
+    
+    cells.append(create_notebook_cell("code", build_code))
     
     # Cell 8: Download
+    section_num += 1
     cells.append(create_notebook_cell("markdown", [
-        "## 7️⃣ Download Your Agent"
+        f"## {section_num}️⃣ Download Your Agent"
     ]))
     
     cells.append(create_notebook_cell("code", [
@@ -460,10 +506,118 @@ async def get_service_tools(service_id: str):
     return tools
 
 
+# =============================================================================
+# Discovery Endpoints (NEW - searches official MCP Registry)
+# =============================================================================
+
+# Cache for registry data (avoid fetching on every request)
+_registry_cache = None
+_registry_cache_time = None
+
+def get_registry_cache():
+    """Get cached registry data, refreshing if older than 5 minutes."""
+    import time
+    global _registry_cache, _registry_cache_time
+    
+    # Refresh cache every 5 minutes
+    if _registry_cache is None or (time.time() - (_registry_cache_time or 0)) > 300:
+        print("📡 Fetching MCP Registry (cache refresh)...")
+        _registry_cache = fetch_all_servers()
+        _registry_cache_time = time.time()
+        print(f"   ✅ Cached {len(_registry_cache)} servers")
+    
+    return _registry_cache
+
+
+@app.post("/api/discover", response_model=DiscoverResponse)
+async def discover_servers(request: DiscoverRequest):
+    """
+    Discover MCP servers from the official registry.
+    
+    Takes a list of service names and searches the MCP Registry for matching servers.
+    Returns verified server configurations.
+    
+    Example:
+        POST /api/discover
+        {"services": ["github", "slack", "linear"]}
+    """
+    try:
+        # Get cached registry data
+        all_servers = get_registry_cache()
+        
+        if not all_servers:
+            return DiscoverResponse(
+                success=False,
+                error="Failed to fetch MCP Registry"
+            )
+        
+        discovered = []
+        not_found = []
+        
+        for service in request.services:
+            print(f"🔍 Searching for: {service}")
+            
+            # Search registry
+            matches = search_registry_for_service(service, all_servers)
+            
+            if matches:
+                # Get best match
+                best = matches[0]
+                config = extract_server_config(best)
+                
+                # Verify the server
+                verification = verify_single_server(config)
+                
+                # Build install info
+                install_type = None
+                install_command = None
+                install_info = config.get("install", {})
+                
+                if install_info:
+                    install_type = install_info.get("type")
+                    install_command = install_info.get("command")
+                
+                discovered.append(DiscoveredServer(
+                    service=service,
+                    name=config.get("name", ""),
+                    description=config.get("description", "")[:200],
+                    version=config.get("version", ""),
+                    install_type=install_type,
+                    install_command=install_command,
+                    remote_url=config.get("remote_url"),
+                    env_vars=[e.get("name", "") for e in config.get("env_vars", [])],
+                    verified=verification.get("verified", False),
+                    score=verification.get("score", 0),
+                    tools_found=len(verification.get("extracted_tools", [])),
+                ))
+                
+                print(f"   ✅ Found: {config.get('name')} (score: {verification.get('score', 0)})")
+            else:
+                not_found.append(service)
+                print(f"   ❌ Not found: {service}")
+        
+        return DiscoverResponse(
+            success=True,
+            servers=discovered,
+            not_found=not_found,
+        )
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return DiscoverResponse(
+            success=False,
+            error=str(e)
+        )
+
+
 @app.post("/api/generate", response_model=GenerateResponse)
 async def generate_notebook(request: GenerateRequest):
     """
     Generate a Colab notebook for the selected tools.
+    
+    Note: Skill generation now happens inside the SDK's AgentBuilder.build()
+    This keeps the notebook simple and the SDK smart.
     """
     try:
         # Load selected services and tools
@@ -481,8 +635,8 @@ async def generate_notebook(request: GenerateRequest):
                     selected_tools.append(tool)
                     tool_schemas.append(tool)
             
-            # Build MCP server config (skip memory - it's built-in)
-            if selected_tools and service_id != "memory":
+            # Build MCP server config
+            if selected_tools:
                 mcp_servers.append({
                     "service": service_id,
                     "name": data.get("name", service_id),
@@ -491,7 +645,7 @@ async def generate_notebook(request: GenerateRequest):
                     "tools": selected_tools,
                 })
         
-        # Generate notebook
+        # Generate notebook (SDK handles skill generation internally)
         notebook_json = generate_notebook_standalone(
             problem_statement=request.problem_statement,
             mcp_servers=mcp_servers,

@@ -1,8 +1,8 @@
 """
-Meta-Agent LangGraph Definition (Registry-Based v3.0)
+Meta-Agent LangGraph Definition (Registry-Based v3.2)
 ======================================================
-Simplified workflow - UI provides service selection directly.
-No LLM needed for service identification.
+Dynamic MCP server discovery from official registry.
+Falls back to curated registry for known services.
 """
 
 from typing import Literal
@@ -10,76 +10,112 @@ from langgraph.graph import StateGraph, END
 
 from meta_agent.state import MetaAgentState, create_initial_state
 from meta_agent.nodes import (
+    # Discovery (NEW)
+    discover_servers,
+    verify_servers,
+    prepare_tools,
+    # Existing
     load_registry,
     filter_tools,
     process_feedback,
+    generate_skill,
     generate_token_guides,
     generate_notebook,
 )
 
 
-def route_after_feedback(state: MetaAgentState) -> Literal["load_registry", "filter_tools", "generate_token_guides"]:
+def route_after_feedback(state: MetaAgentState) -> Literal["discover_servers", "filter_tools", "generate_skill"]:
     """
     Route based on user feedback action.
     
-    - "add_tools" → back to load_registry (might need new services)
+    - "add_tools" → back to discover_servers (search for new services)
     - "remove_tools" → back to filter_tools (re-filter with removals)
-    - "approved" → continue to generate_token_guides
+    - "approved" → continue to generate_skill (then guides, then notebook)
     """
     action = state.get("feedback_action", "approved")
     
     if action == "add_tools":
-        return "load_registry"
+        return "discover_servers"
     elif action == "remove_tools":
         return "filter_tools"
     else:
-        return "generate_token_guides"
+        return "generate_skill"
+
+
+def route_after_verify(state: MetaAgentState) -> Literal["load_registry", "prepare_tools"]:
+    """
+    Route after verification:
+    - If we have verified servers → prepare_tools → filter_tools
+    - If verification failed → fallback to load_registry
+    """
+    verified = state.get("verified_servers", [])
+    
+    # Check if we have any successfully verified servers
+    has_verified = any(v.get("verification", {}).get("verified", False) for v in verified)
+    
+    if has_verified:
+        return "prepare_tools"
+    else:
+        # Fallback to curated registry
+        return "load_registry"
 
 
 def create_meta_agent_graph() -> StateGraph:
     """
-    Create the registry-based Meta-Agent LangGraph.
+    Create the Meta-Agent LangGraph with dynamic MCP discovery.
     
-    Graph Flow (v3.0 - UI provides service selection):
+    Graph Flow (v3.2 - Dynamic Discovery):
     
         [UI: User selects services]
                     │
                     ▼
            ┌──────────────────┐
-           │  load_registry   │  (Load tools from JSON files)
+           │ discover_servers │  (Search MCP Registry)
            └────────┬─────────┘
                     │
                     ▼
            ┌──────────────────┐
-           │  filter_tools    │  (LLM selects relevant tools)
-           └────────┬─────────┘
-                    │
-                    ▼
-           ┌──────────────────┐
-           │ HITL: User reviews│  (Human-in-the-Loop)
-           │  process_feedback│
+           │  verify_servers  │  (Verify NPM/GitHub/etc)
            └────────┬─────────┘
                     │
            ┌────────┴─────────┐
            │                  │
- add/remove│                  │approved
+     found │                  │not found
            │                  │
-       ┌───┘                  └───┐
-       │                          │
-       ▼                          ▼
-  (loop back)          ┌──────────────────┐
-  load_registry or     │generate_guides   │
-  filter_tools         └────────┬─────────┘
-       │                        │
-       │                        ▼
-       │            ┌──────────────────────┐
-       └──────────► │ generate_notebook    │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                            ┌──────┐
-                            │ END  │
-                            └──────┘
+           ▼                  ▼
+    ┌──────────────┐   ┌──────────────┐
+    │ filter_tools │   │load_registry │  (Fallback to curated)
+    └──────┬───────┘   └──────┬───────┘
+           │                  │
+           └────────┬─────────┘
+                    │
+                    ▼
+           ┌──────────────────┐
+           │ HITL: User reviews│
+           │  process_feedback│
+           └────────┬─────────┘
+                    │
+           ┌────────┴─────────┐
+ add/remove│                  │approved
+           ▼                  ▼
+    (loop back)      ┌──────────────────┐
+                     │  generate_skill  │
+                     └────────┬─────────┘
+                              │
+                              ▼
+                   ┌──────────────────┐
+                   │ generate_guides  │
+                   └────────┬─────────┘
+                            │
+                            ▼
+                 ┌──────────────────────┐
+                 │  generate_notebook   │
+                 └──────────┬───────────┘
+                            │
+                            ▼
+                         ┌──────┐
+                         │ END  │
+                         └──────┘
     
     Returns:
         Compiled StateGraph with HITL interrupt point
@@ -87,18 +123,42 @@ def create_meta_agent_graph() -> StateGraph:
     # Build the graph
     workflow = StateGraph(MetaAgentState)
     
-    # Add nodes (no parse_problem - UI handles service selection)
-    workflow.add_node("load_registry", load_registry)
+    # Discovery nodes (NEW)
+    workflow.add_node("discover_servers", discover_servers)
+    workflow.add_node("verify_servers", verify_servers)
+    workflow.add_node("prepare_tools", prepare_tools)
+    
+    # Existing nodes
+    workflow.add_node("load_registry", load_registry)  # Fallback
     workflow.add_node("filter_tools", filter_tools)
     workflow.add_node("process_feedback", process_feedback)
+    workflow.add_node("generate_skill", generate_skill)
     workflow.add_node("generate_token_guides", generate_token_guides)
     workflow.add_node("generate_notebook", generate_notebook)
     
-    # Set entry point - start directly from load_registry
-    workflow.set_entry_point("load_registry")
+    # Set entry point - start with discovery
+    workflow.set_entry_point("discover_servers")
     
-    # Linear flow to HITL point
+    # Discovery flow
+    workflow.add_edge("discover_servers", "verify_servers")
+    
+    # After verification, route based on results
+    workflow.add_conditional_edges(
+        "verify_servers",
+        route_after_verify,
+        {
+            "prepare_tools": "prepare_tools",  # Verified → prepare tools
+            "load_registry": "load_registry"   # Fallback if discovery failed
+        }
+    )
+    
+    # Prepare tools feeds into filter
+    workflow.add_edge("prepare_tools", "filter_tools")
+    
+    # Fallback registry also goes to filter_tools
     workflow.add_edge("load_registry", "filter_tools")
+    
+    # Filter to feedback
     workflow.add_edge("filter_tools", "process_feedback")
     
     # Conditional routing after feedback
@@ -106,18 +166,18 @@ def create_meta_agent_graph() -> StateGraph:
         "process_feedback",
         route_after_feedback,
         {
-            "load_registry": "load_registry",
+            "discover_servers": "discover_servers",  # Loop back to discovery
             "filter_tools": "filter_tools",
-            "generate_token_guides": "generate_token_guides"
+            "generate_skill": "generate_skill"
         }
     )
     
-    # Final pipeline
+    # Final pipeline: skill → guides → notebook
+    workflow.add_edge("generate_skill", "generate_token_guides")
     workflow.add_edge("generate_token_guides", "generate_notebook")
     workflow.add_edge("generate_notebook", END)
     
     # Compile with interrupt before feedback processing
-    # This allows UI to pause, show tools to user, collect input, then resume
     return workflow.compile(interrupt_before=["process_feedback"])
 
 
@@ -184,6 +244,8 @@ async def run_meta_agent(
         "mcp_servers": result.get("mcp_servers", []),
         "token_guides": result.get("token_guides", []),
         "registry_services": result.get("registry_services", []),
+        "full_skill": result.get("full_skill", ""),
+        "condensed_rules": result.get("condensed_rules", ""),
         "errors": result.get("errors", []),
     }
 
