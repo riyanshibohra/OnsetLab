@@ -132,6 +132,7 @@
         "children": {
           "type": "array",
           "description": "Initial blocks/content for the page",
+          "items": {"type": "object"},
           "required": false
         }
       },
@@ -180,6 +181,7 @@
         "sorts": {
           "type": "array",
           "description": "Sort configuration",
+          "items": {"type": "object"},
           "required": false
         },
         "page_size": {
@@ -218,6 +220,7 @@
         "title": {
           "type": "array",
           "description": "Title for the data source",
+          "items": {"type": "object"},
           "required": true
         },
         "properties": {
@@ -256,6 +259,7 @@
         "children": {
           "type": "array",
           "description": "Array of blocks to append",
+          "items": {"type": "object"},
           "required": true
         }
       },
@@ -275,6 +279,7 @@
         "rich_text": {
           "type": "array",
           "description": "Comment text content",
+          "items": {"type": "object"},
           "required": true
         }
       },

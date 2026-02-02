@@ -185,6 +185,7 @@
         "excludePatterns": {
           "type": "array",
           "description": "Array of glob patterns to exclude",
+          "items": {"type": "string"},
           "required": false
         }
       },

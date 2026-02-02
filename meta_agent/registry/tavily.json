@@ -128,11 +128,13 @@
         "include_domains": {
           "type": "array",
           "description": "List of domains to specifically include",
+          "items": {"type": "string"},
           "required": false
         },
         "exclude_domains": {
           "type": "array",
           "description": "List of domains to exclude",
+          "items": {"type": "string"},
           "required": false
         },
         "country": {
@@ -158,6 +160,7 @@
         "urls": {
           "type": "array",
           "description": "List of URLs to extract content from",
+          "items": {"type": "string"},
           "required": true
         },
         "extract_depth": {
@@ -234,11 +237,13 @@
         "select_paths": {
           "type": "array",
           "description": "Regex patterns for URL path selection (e.g., '/docs/.*')",
+          "items": {"type": "string"},
           "required": false
         },
         "select_domains": {
           "type": "array",
           "description": "Regex patterns to restrict to specific domains/subdomains",
+          "items": {"type": "string"},
           "required": false
         },
         "allow_external": {
@@ -310,11 +315,13 @@
         "select_paths": {
           "type": "array",
           "description": "Regex patterns for URL path selection",
+          "items": {"type": "string"},
           "required": false
         },
         "select_domains": {
           "type": "array",
           "description": "Regex patterns for domain restriction",
+          "items": {"type": "string"},
           "required": false
         },
         "allow_external": {

@@ -346,11 +346,13 @@
         "assignees": {
           "type": "array",
           "description": "Usernames to assign",
+          "items": {"type": "string"},
           "required": false
         },
         "labels": {
           "type": "array",
           "description": "Labels to apply",
+          "items": {"type": "string"},
           "required": false
         }
       },
@@ -421,6 +423,7 @@
         "labels": {
           "type": "array",
           "description": "Filter by labels",
+          "items": {"type": "string"},
           "required": false
         },
         "perPage": {
