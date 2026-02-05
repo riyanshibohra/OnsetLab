@@ -1,10 +1,18 @@
 """
-OnsetLab Agent - REWOO-based agent with tool calling.
+OnsetLab Agent - Hybrid REWOO/ReAct agent with intelligent routing.
+
+The agent uses a hybrid approach:
+1. ANALYZE task complexity using the Router
+2. ROUTE to optimal strategy:
+   - REWOO: Plan-first for predictable, structured tasks
+   - REACT: Iterative reasoning for exploratory/dynamic tasks
+   - DIRECT: No tool execution for meta/conversational queries
+3. FALLBACK: If primary strategy fails, automatically try alternate
 """
 
 import re
 from typing import List, Dict, Any, Optional, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from .model.base import BaseModel
@@ -17,6 +25,7 @@ from .rewoo.verifier import Verifier
 from .rewoo.solver import Solver
 from .rewoo.react_fallback import ReactFallback
 from .mcp.server import MCPServer
+from .router import Router, Strategy, RoutingDecision
 
 
 # Patterns for casual messages that don't need tools
@@ -40,11 +49,20 @@ class AgentResult:
     verified: bool
     slm_calls: int
     used_react_fallback: bool = False
+    strategy_used: str = "rewoo"  # rewoo, react, direct
+    routing_decision: Optional[RoutingDecision] = None
 
 
 class Agent:
     """
-    OnsetLab Agent - REWOO-based agent for reliable tool calling.
+    OnsetLab Agent - Hybrid REWOO/ReAct agent with intelligent routing.
+    
+    Uses a hybrid approach that automatically selects the best execution strategy:
+    - REWOO (plan-first): Fast for predictable, structured tasks
+    - ReAct (iterative): Flexible for exploratory/dynamic tasks
+    - Direct: No tools needed for meta/conversational queries
+    
+    Includes automatic fallback: if primary strategy fails, tries alternate.
     """
     
     def __init__(
@@ -56,13 +74,28 @@ class Agent:
         verify: bool = True,
         max_replans: int = 1,
         react_fallback: bool = True,
+        routing: bool = True,  # Enable intelligent routing
         debug: bool = False,
     ):
-        """Create an agent."""
+        """
+        Create an agent.
+        
+        Args:
+            model: Ollama model name or BaseModel instance
+            tools: List of tools to use
+            mcp_servers: List of MCP servers to connect
+            memory: Enable conversation memory
+            verify: Enable plan/result verification
+            max_replans: Max replan attempts on failure
+            react_fallback: Enable ReAct fallback when REWOO fails
+            routing: Enable intelligent strategy routing (hybrid approach)
+            debug: Print debug info
+        """
         # Settings (set early for use in other methods)
         self._verify = verify
         self._max_replans = max_replans
         self._react_fallback_enabled = react_fallback
+        self._routing_enabled = routing
         self._debug = debug
         
         # Setup model
@@ -77,11 +110,13 @@ class Agent:
         
         # Setup components
         all_tools = self._collect_all_tools()
+        self._all_tools = all_tools  # Store for router
         self._planner = Planner(self._model, all_tools, debug=debug)
         self._executor = Executor(all_tools)
         self._verifier = Verifier(self._model, debug=debug) if verify else None
         self._solver = Solver(self._model)
         self._react = ReactFallback(self._model, all_tools, debug=debug) if react_fallback else None
+        self._router = Router(all_tools, debug=debug) if routing else None
         
         # Setup memory - stores conversation with results
         self._memory = ConversationMemory(max_turns=10) if memory else None
@@ -200,9 +235,18 @@ class Agent:
         return False
     
     def run(self, query: str) -> AgentResult:
-        """Run a query."""
+        """
+        Run a query using the hybrid approach.
+        
+        Flow:
+        1. Route: Classify task and select optimal strategy
+        2. Execute: Run chosen strategy (REWOO, ReAct, or Direct)
+        3. Fallback: If primary fails, try alternate strategy
+        """
         slm_calls = 0
         used_react = False
+        strategy_used = "rewoo"
+        routing_decision = None
         
         # Get context
         context = self._get_context()
@@ -210,10 +254,10 @@ class Agent:
         if self._debug:
             print(f"\n[DEBUG] Context:\n{context}\n")
         
-        # Handle casual messages directly (skip planner)
+        # Handle casual messages directly (skip routing)
         if self._is_casual(query):
             if self._debug:
-                print(f"[DEBUG] Detected casual message, skipping planner")
+                print(f"[DEBUG] Detected casual message, skipping routing")
             answer = self._solver.solve(query, [], {}, context)
             slm_calls = 1
             
@@ -226,8 +270,98 @@ class Agent:
                 plan=[],
                 results={},
                 verified=True,
-                slm_calls=slm_calls
+                slm_calls=slm_calls,
+                strategy_used="direct"
             )
+        
+        # ========================================
+        # STEP 1: ROUTE - Select optimal strategy
+        # ========================================
+        if self._routing_enabled and self._router:
+            routing_decision = self._router.route(query)
+            
+            if self._debug:
+                print(f"\n[DEBUG] Routing Decision:")
+                print(f"  Strategy: {routing_decision.strategy.value}")
+                print(f"  Confidence: {routing_decision.confidence:.0%}")
+                print(f"  Reason: {routing_decision.reason}")
+                print(f"  Matched tools: {routing_decision.matched_tools}")
+        else:
+            # Default to REWOO if routing disabled
+            routing_decision = RoutingDecision(
+                strategy=Strategy.REWOO,
+                confidence=1.0,
+                reason="Routing disabled - defaulting to REWOO",
+                matched_tools=[]
+            )
+        
+        # ========================================
+        # STEP 2: EXECUTE - Run chosen strategy
+        # ========================================
+        
+        # DIRECT: No tool execution needed
+        if routing_decision.strategy == Strategy.DIRECT:
+            if self._debug:
+                print(f"[DEBUG] Using DIRECT strategy (no tools)")
+            
+            answer = self._handle_direct(query, context)
+            slm_calls = 1
+            strategy_used = "direct"
+            
+            if self._memory is not None:
+                self._memory.add_user_message(query)
+                self._memory.add_assistant_message(answer)
+            
+            return AgentResult(
+                answer=answer,
+                plan=[],
+                results={},
+                verified=True,
+                slm_calls=slm_calls,
+                strategy_used=strategy_used,
+                routing_decision=routing_decision
+            )
+        
+        # REACT: Iterative reasoning for exploratory tasks
+        if routing_decision.strategy == Strategy.REACT:
+            if self._debug:
+                print(f"[DEBUG] Using REACT strategy (exploratory task)")
+            
+            if self._react:
+                answer, plan, results = self._react.run(query, context)
+                slm_calls = len(plan) + 1
+                strategy_used = "react"
+                used_react = True
+                self._last_results = results
+                
+                if self._memory is not None:
+                    self._memory.add_user_message(query)
+                    if results:
+                        result_summary = ", ".join([f"{k}={str(v)[:50]}" for k, v in results.items()])
+                        self._memory.add_assistant_message(f"{answer} [Results: {result_summary}]")
+                    else:
+                        self._memory.add_assistant_message(answer)
+                
+                return AgentResult(
+                    answer=answer,
+                    plan=plan,
+                    results=results,
+                    verified=True,
+                    slm_calls=slm_calls,
+                    used_react_fallback=True,
+                    strategy_used=strategy_used,
+                    routing_decision=routing_decision
+                )
+            else:
+                # React not available, fall through to REWOO
+                if self._debug:
+                    print(f"[DEBUG] ReAct not available, falling back to REWOO")
+        
+        # REWOO: Plan-first execution (default)
+        if self._debug:
+            print(f"[DEBUG] Using REWOO strategy (plan-first)")
+        
+        strategy_used = "rewoo"
         
         # Plan (1 SLM call)
         plan = self._planner.plan(query, context)
@@ -250,12 +384,14 @@ class Agent:
         # Execute if we have a plan
         if plan:
             results = self._executor.execute(plan)
-            self._last_results = results  # Store for next turn
+            self._last_results = results
         else:
             results = {}
             self._last_results = {}
         
-        # Check if REWOO failed - fallback to ReAct if enabled
+        # ========================================
+        # STEP 3: FALLBACK - If REWOO failed, try ReAct
+        # ========================================
         if self._react_fallback_enabled and self._react and self._check_rewoo_failed(plan, results):
             if self._debug:
                 print(f"[DEBUG] REWOO failed, using ReAct fallback")
@@ -278,18 +414,17 @@ Fix the parameters and try again with the SAME tool ({tool})."""
             
             answer, react_steps, react_results = self._react.run(query, failure_context)
             used_react = True
-            slm_calls += len(react_steps) + 1  # +1 for potential final answer
+            strategy_used = "rewoo->react"  # Indicate fallback was used
+            slm_calls += len(react_steps) + 1
             
-            # Convert ReAct steps to plan format
             plan = react_steps
             results = react_results
             self._last_results = results
             
-            # Update memory
             if self._memory is not None:
                 self._memory.add_user_message(query)
                 if results:
-                    result_summary = ", ".join([f"{k}={v[:50]}" for k, v in results.items()])
+                    result_summary = ", ".join([f"{k}={str(v)[:50]}" for k, v in results.items()])
                     self._memory.add_assistant_message(f"{answer} [Results: {result_summary}]")
                 else:
                     self._memory.add_assistant_message(answer)
@@ -298,9 +433,11 @@ Fix the parameters and try again with the SAME tool ({tool})."""
                 answer=answer,
                 plan=plan,
                 results=results,
-                verified=True,  # ReAct is self-correcting
+                verified=True,
                 slm_calls=slm_calls,
-                used_react_fallback=True
+                used_react_fallback=True,
+                strategy_used=strategy_used,
+                routing_decision=routing_decision
             )
         
         # POST-EXECUTION: Verify results
@@ -322,12 +459,11 @@ Fix the parameters and try again with the SAME tool ({tool})."""
         answer = self._solver.solve(query, plan, results, context)
         slm_calls += 1
         
-        # Update memory (use 'is not None' because empty memory is falsy)
+        # Update memory
         if self._memory is not None:
             self._memory.add_user_message(query)
-            # Include the result in the assistant message for memory
             if results:
-                result_summary = ", ".join([f"{k}={v}" for k, v in results.items()])
+                result_summary = ", ".join([f"{k}={str(v)}" for k, v in results.items()])
                 self._memory.add_assistant_message(f"{answer} [Results: {result_summary}]")
             else:
                 self._memory.add_assistant_message(answer)
@@ -338,8 +474,28 @@ Fix the parameters and try again with the SAME tool ({tool})."""
             results=results,
             verified=verified,
             slm_calls=slm_calls,
-            used_react_fallback=used_react
+            used_react_fallback=used_react,
+            strategy_used=strategy_used,
+            routing_decision=routing_decision
         )
+    
+    def _handle_direct(self, query: str, context: Optional[str]) -> str:
+        """Handle DIRECT strategy - answer without tool execution."""
+        # Check if asking about tools
+        query_lower = query.lower()
+        
+        if "what tools" in query_lower or "list" in query_lower and "tool" in query_lower:
+            # List available tools
+            tool_list = []
+            for tool in self._all_tools:
+                tool_list.append(f"- {tool.name}: {tool.description[:60]}...")
+            return "Available tools:\n" + "\n".join(tool_list)
+        
+        if "help" in query_lower or "how" in query_lower:
+            return f"I'm an AI assistant with {len(self._all_tools)} tools. Ask me to calculate, convert units, get the time, or process text. For MCP tools, I can interact with external services."
+        
+        # Generic conversational response
+        return self._solver.solve(query, [], {}, context)
     
     def chat(self, message: str) -> str:
         """Interactive chat."""
@@ -373,11 +529,7 @@ Fix the parameters and try again with the SAME tool ({tool})."""
         self._mcp_servers.append(server)
         
         # Reload all components with updated tools
-        all_tools = self._collect_all_tools()
-        self._planner = Planner(self._model, all_tools, debug=self._debug)
-        self._executor = Executor(all_tools)
-        if self._react_fallback_enabled:
-            self._react = ReactFallback(self._model, all_tools, debug=self._debug)
+        self._reload_components()
     
     def remove_mcp_server(self, name: str) -> None:
         """
@@ -393,11 +545,18 @@ Fix the parameters and try again with the SAME tool ({tool})."""
                 break
         
         # Reload all components with updated tools
+        self._reload_components()
+    
+    def _reload_components(self) -> None:
+        """Reload all components with current tools."""
         all_tools = self._collect_all_tools()
+        self._all_tools = all_tools
         self._planner = Planner(self._model, all_tools, debug=self._debug)
         self._executor = Executor(all_tools)
         if self._react_fallback_enabled:
             self._react = ReactFallback(self._model, all_tools, debug=self._debug)
+        if self._routing_enabled:
+            self._router = Router(all_tools, debug=self._debug)
     
     def disconnect_mcp_servers(self) -> None:
         """Disconnect all MCP servers."""
@@ -418,6 +577,37 @@ Fix the parameters and try again with the SAME tool ({tool})."""
     @property
     def model_name(self) -> str:
         return self._model.model_name
+    
+    def export(self, format: str, output: str, **kwargs) -> str:
+        """
+        Export agent in the specified format.
+        
+        Args:
+            format: Export format - "config", "docker", or "binary"
+            output: Output path (file for config/binary, directory for docker)
+            **kwargs: Format-specific options:
+                - config: format="yaml"|"json", include_mcp_auth=False
+                - docker: include_ollama=False, api_mode=True
+                - binary: use_pyinstaller=False
+                
+        Returns:
+            Path to exported artifact
+            
+        Examples:
+            # Export as YAML config
+            agent.export("config", "my_agent.yaml")
+            
+            # Export as Docker setup
+            agent.export("docker", "./docker_agent/")
+            
+            # Export as Docker with bundled Ollama
+            agent.export("docker", "./docker_agent/", include_ollama=True)
+            
+            # Export as standalone Python script
+            agent.export("binary", "./my_agent.py")
+        """
+        from .packaging import export_agent
+        return export_agent(self, format, output, **kwargs)
     
     def __repr__(self) -> str:
         return f"<Agent model={self.model_name} tools={len(self._tools)} mcp={len(self._mcp_servers)}>"

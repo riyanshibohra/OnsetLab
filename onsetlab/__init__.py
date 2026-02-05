@@ -1,7 +1,7 @@
 """
-OnsetLab - Reliable SLM agents with REWOO strategy.
+OnsetLab - Reliable SLM agents with hybrid REWOO/ReAct strategy.
 
-Plan once, execute fast, verify always.
+Build, benchmark, and package local AI agents.
 """
 
 __version__ = "0.1.0"
@@ -16,11 +16,16 @@ from .tools import (
     TextProcessor,
     RandomGenerator,
 )
+from .benchmark import Benchmark
+from .router import Router, Strategy
 
 __all__ = [
     # Core
     "Agent",
     "MCPServer",
+    "Benchmark",
+    "Router",
+    "Strategy",
     # Tools
     "BaseTool",
     "Calculator",
