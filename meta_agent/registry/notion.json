@@ -27,263 +27,320 @@
       "notes": "Integration only sees pages it's explicitly connected to. Add connection to parent pages for recursive access."
     }
   },
-  "toolsets": [
-    {
-      "id": "search",
-      "name": "Search & Discovery",
-      "enabled_by_default": true,
-      "keywords": ["search", "find", "discover"]
-    },
-    {
-      "id": "pages",
-      "name": "Page Management",
-      "enabled_by_default": true,
-      "keywords": ["page", "create", "retrieve", "update"]
-    },
-    {
-      "id": "data_sources",
-      "name": "Data Sources (Databases)",
-      "enabled_by_default": true,
-      "keywords": ["database", "data source", "query", "table"]
-    },
-    {
-      "id": "blocks",
-      "name": "Block Management",
-      "enabled_by_default": true,
-      "keywords": ["block", "content", "append"]
-    },
-    {
-      "id": "comments",
-      "name": "Comments",
-      "enabled_by_default": false,
-      "keywords": ["comment", "discussion", "feedback"]
-    }
-  ],
   "tools": [
     {
-      "name": "v1/search",
-      "description": "Search for pages or data sources (databases) by title",
-      "category": "search",
-      "keywords": ["search", "find", "page", "database"],
+      "name": "notion-search",
+      "description": "Search across your Notion workspace and connected tools like Slack, Google Drive, and Jira (requires Notion AI)",
+      "keywords": ["search", "find", "discover", "query"],
       "parameters": {
-        "query": {
-          "type": "string",
-          "description": "Text to search for in page/database titles",
-          "required": true
-        },
-        "filter": {
-          "type": "object",
-          "description": "Filter by object type",
-          "required": false,
-          "properties": {
-            "value": {
-              "type": "string",
-              "enum": ["page", "data_source"]
-            },
-            "property": {
-              "type": "string",
-              "enum": ["object"]
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Text to search for across workspace"
+          },
+          "filter": {
+            "type": "object",
+            "description": "Optional filter by type (page or data_source)",
+            "properties": {
+              "value": {
+                "type": "string",
+                "enum": ["page", "data_source"]
+              },
+              "property": {
+                "type": "string",
+                "enum": ["object"]
+              }
             }
           }
         },
-        "sort": {
-          "type": "object",
-          "description": "Sort order",
-          "required": false
-        },
-        "page_size": {
-          "type": "number",
-          "description": "Number of results (max 100)",
-          "required": false
-        }
+        "required": ["query"]
       },
       "required_params": ["query"]
     },
     {
-      "name": "v1/pages/retrieve",
-      "description": "Retrieve page details and properties by page ID",
-      "category": "pages",
-      "keywords": ["get", "retrieve", "page", "details"],
+      "name": "notion-fetch",
+      "description": "Retrieves content from a Notion page or database by its URL",
+      "keywords": ["get", "retrieve", "fetch", "content"],
       "parameters": {
-        "page_id": {
-          "type": "string",
-          "description": "Page ID to retrieve",
-          "required": true
-        }
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Notion page or database URL"
+          }
+        },
+        "required": ["url"]
+      },
+      "required_params": ["url"]
+    },
+    {
+      "name": "notion-create-pages",
+      "description": "Creates one or more Notion pages with specified properties and content",
+      "keywords": ["create", "new", "add", "page"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pages": {
+            "type": "array",
+            "description": "Array of page objects to create",
+            "items": {
+              "type": "object",
+              "properties": {
+                "parent": {
+                  "type": "object",
+                  "description": "Parent page or database ID"
+                },
+                "properties": {
+                  "type": "object",
+                  "description": "Page properties (title, etc.)"
+                },
+                "children": {
+                  "type": "array",
+                  "description": "Initial blocks/content for the page"
+                }
+              }
+            }
+          }
+        },
+        "required": ["pages"]
+      },
+      "required_params": ["pages"]
+    },
+    {
+      "name": "notion-update-page",
+      "description": "Update a Notion page's properties or content",
+      "keywords": ["update", "edit", "modify", "change"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "description": "Page ID to update"
+          },
+          "properties": {
+            "type": "object",
+            "description": "Updated properties"
+          },
+          "archived": {
+            "type": "boolean",
+            "description": "Archive/unarchive the page"
+          }
+        },
+        "required": ["page_id"]
       },
       "required_params": ["page_id"]
     },
     {
-      "name": "v1/pages/create",
-      "description": "Create a new page in Notion",
-      "category": "pages",
-      "keywords": ["create", "new", "page"],
+      "name": "notion-move-pages",
+      "description": "Move one or more Notion pages or databases to a new parent",
+      "keywords": ["move", "relocate", "reorganize"],
       "parameters": {
-        "parent": {
-          "type": "object",
-          "description": "Parent page or database (requires page_id or database_id)",
-          "required": true
-        },
+        "type": "object",
         "properties": {
-          "type": "object",
-          "description": "Page properties (title, etc.)",
-          "required": true
+          "pages": {
+            "type": "array",
+            "description": "Array of page IDs to move"
+          },
+          "parent": {
+            "type": "object",
+            "description": "New parent page or database"
+          }
         },
-        "children": {
-          "type": "array",
-          "description": "Initial blocks/content for the page",
-          "items": {"type": "object"},
-          "required": false
-        }
+        "required": ["pages", "parent"]
       },
-      "required_params": ["parent", "properties"]
+      "required_params": ["pages", "parent"]
     },
     {
-      "name": "v1/pages/update",
-      "description": "Update page properties and settings",
-      "category": "pages",
-      "keywords": ["update", "edit", "modify", "page"],
+      "name": "notion-duplicate-page",
+      "description": "Duplicate a Notion page within your workspace (completes asynchronously)",
+      "keywords": ["duplicate", "copy", "clone"],
       "parameters": {
-        "page_id": {
-          "type": "string",
-          "description": "Page ID to update",
-          "required": true
-        },
+        "type": "object",
         "properties": {
-          "type": "object",
-          "description": "Updated properties",
-          "required": false
+          "page_id": {
+            "type": "string",
+            "description": "Page ID to duplicate"
+          }
         },
-        "archived": {
-          "type": "boolean",
-          "description": "Archive/unarchive the page",
-          "required": false
-        }
+        "required": ["page_id"]
       },
       "required_params": ["page_id"]
     },
     {
-      "name": "query-data-source",
-      "description": "Query a data source (database) with filters and sorts",
-      "category": "data_sources",
-      "keywords": ["query", "database", "filter", "sort", "data source"],
+      "name": "notion-create-database",
+      "description": "Creates a new Notion database, initial data source, and initial view with specified properties",
+      "keywords": ["create", "database", "data source", "new"],
       "parameters": {
-        "data_source_id": {
-          "type": "string",
-          "description": "Data source (database) ID to query",
-          "required": true
-        },
-        "filter": {
-          "type": "object",
-          "description": "Filter conditions",
-          "required": false
-        },
-        "sorts": {
-          "type": "array",
-          "description": "Sort configuration",
-          "items": {"type": "object"},
-          "required": false
-        },
-        "page_size": {
-          "type": "number",
-          "description": "Number of results (max 100)",
-          "required": false
-        }
-      },
-      "required_params": ["data_source_id"]
-    },
-    {
-      "name": "retrieve-a-data-source",
-      "description": "Get metadata and schema for a data source (database)",
-      "category": "data_sources",
-      "keywords": ["retrieve", "get", "database", "schema", "data source"],
-      "parameters": {
-        "data_source_id": {
-          "type": "string",
-          "description": "Data source ID to retrieve",
-          "required": true
-        }
-      },
-      "required_params": ["data_source_id"]
-    },
-    {
-      "name": "create-a-data-source",
-      "description": "Create a new data source (database) in Notion",
-      "category": "data_sources",
-      "keywords": ["create", "new", "database", "data source"],
-      "parameters": {
-        "parent": {
-          "type": "object",
-          "description": "Parent page (requires page_id)",
-          "required": true
-        },
-        "title": {
-          "type": "array",
-          "description": "Title for the data source",
-          "items": {"type": "object"},
-          "required": true
-        },
+        "type": "object",
         "properties": {
-          "type": "object",
-          "description": "Schema/properties definition",
-          "required": true
-        }
+          "parent": {
+            "type": "object",
+            "description": "Parent page (requires page_id)"
+          },
+          "title": {
+            "type": "array",
+            "description": "Title for the database",
+            "items": {"type": "object"}
+          },
+          "properties": {
+            "type": "object",
+            "description": "Schema/properties definition"
+          }
+        },
+        "required": ["parent", "title", "properties"]
       },
       "required_params": ["parent", "title", "properties"]
     },
     {
-      "name": "v1/blocks/retrieve",
-      "description": "Retrieve a block by ID",
-      "category": "blocks",
-      "keywords": ["get", "retrieve", "block", "content"],
+      "name": "notion-update-data-source",
+      "description": "Update a Notion data source's properties, name, description, or other attributes",
+      "keywords": ["update", "edit", "data source", "database"],
       "parameters": {
-        "block_id": {
-          "type": "string",
-          "description": "Block ID to retrieve",
-          "required": true
-        }
+        "type": "object",
+        "properties": {
+          "data_source_id": {
+            "type": "string",
+            "description": "Data source ID to update"
+          },
+          "properties": {
+            "type": "object",
+            "description": "Updated properties"
+          }
+        },
+        "required": ["data_source_id"]
       },
-      "required_params": ["block_id"]
+      "required_params": ["data_source_id"]
     },
     {
-      "name": "v1/blocks/children/append",
-      "description": "Append blocks (content) to a page or block",
-      "category": "blocks",
-      "keywords": ["append", "add", "content", "block"],
+      "name": "notion-query-data-sources",
+      "description": "Query across multiple Notion data sources with structured summaries, grouping, and filters (requires Enterprise plan with Notion AI)",
+      "keywords": ["query", "search", "filter", "data source"],
       "parameters": {
-        "block_id": {
-          "type": "string",
-          "description": "Parent block or page ID",
-          "required": true
+        "type": "object",
+        "properties": {
+          "data_sources": {
+            "type": "array",
+            "description": "Array of data source IDs to query"
+          },
+          "filter": {
+            "type": "object",
+            "description": "Filter conditions"
+          },
+          "sorts": {
+            "type": "array",
+            "description": "Sort configuration"
+          }
         },
-        "children": {
-          "type": "array",
-          "description": "Array of blocks to append",
-          "items": {"type": "object"},
-          "required": true
-        }
+        "required": ["data_sources"]
       },
-      "required_params": ["block_id", "children"]
+      "required_params": ["data_sources"]
     },
     {
-      "name": "v1/comments/create",
-      "description": "Create a comment on a page or block",
-      "category": "comments",
-      "keywords": ["create", "comment", "discussion"],
+      "name": "notion-query-database-view",
+      "description": "Query data from a Notion database using a pre-defined view's filters and sorts (requires Business plan with Notion AI)",
+      "keywords": ["query", "view", "database", "filter"],
       "parameters": {
-        "parent": {
-          "type": "object",
-          "description": "Parent page or block (requires page_id or discussion_id)",
-          "required": true
+        "type": "object",
+        "properties": {
+          "database_id": {
+            "type": "string",
+            "description": "Database ID"
+          },
+          "view_id": {
+            "type": "string",
+            "description": "View ID to use for filtering and sorting"
+          }
         },
-        "rich_text": {
-          "type": "array",
-          "description": "Comment text content",
-          "items": {"type": "object"},
-          "required": true
-        }
+        "required": ["database_id", "view_id"]
+      },
+      "required_params": ["database_id", "view_id"]
+    },
+    {
+      "name": "notion-create-comment",
+      "description": "Add a comment to a page (block-level comments not yet supported)",
+      "keywords": ["comment", "feedback", "note"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": "object",
+            "description": "Parent page or discussion (requires page_id or discussion_id)"
+          },
+          "rich_text": {
+            "type": "array",
+            "description": "Comment text content",
+            "items": {"type": "object"}
+          }
+        },
+        "required": ["parent", "rich_text"]
       },
       "required_params": ["parent", "rich_text"]
+    },
+    {
+      "name": "notion-get-comments",
+      "description": "Lists all comments on a specific page, including threaded discussions",
+      "keywords": ["list", "comments", "get", "feedback"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "description": "Page ID to get comments from"
+          }
+        },
+        "required": ["page_id"]
+      },
+      "required_params": ["page_id"]
+    },
+    {
+      "name": "notion-get-teams",
+      "description": "Retrieves a list of teams (teamspaces) in the current workspace",
+      "keywords": ["teams", "teamspaces", "list"],
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "required_params": []
+    },
+    {
+      "name": "notion-get-users",
+      "description": "Lists all users in the workspace with their details",
+      "keywords": ["users", "list", "people"],
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "required_params": []
+    },
+    {
+      "name": "notion-get-user",
+      "description": "Retrieve your user information by ID",
+      "keywords": ["user", "get", "profile"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "description": "User ID to retrieve"
+          }
+        },
+        "required": ["user_id"]
+      },
+      "required_params": ["user_id"]
+    },
+    {
+      "name": "notion-get-self",
+      "description": "Retrieves information about your own bot user and the Notion workspace you're connected to",
+      "keywords": ["self", "bot", "workspace", "info"],
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "required_params": []
     }
   ]
 }
