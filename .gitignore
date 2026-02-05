@@ -1,4 +1,5 @@
 website/
+test_interactive.py
 # Python
 __pycache__/
 *.py[cod]
