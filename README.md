@@ -9,6 +9,7 @@ Agent framework for small language models (3B parameters) that achieves GPT-4 le
 - **No API keys** - runs entirely on Ollama
 - **No fine-tuning** - works out of the box with any Ollama model
 - **MCP support** - connect to any MCP-compatible server
+- **Package & Deploy** - export as Docker, config, or standalone script
 
 ## Install
 
@@ -85,19 +86,64 @@ server = MCPServer(
 agent.add_mcp_server(server)
 ```
 
+## Packaging & Deployment
+
+Export your agent for deployment:
+
+```python
+# Export as Docker (includes docker-compose with Ollama)
+agent.export("docker", "./my_agent/")
+
+# Export as config file
+agent.export("config", "my_agent.yaml")
+
+# Export as standalone script
+agent.export("binary", "my_agent.py")
+```
+
+Or via CLI:
+
+```bash
+python -m onsetlab export --format docker --output ./deployment/
+cd deployment && docker-compose up --build
+```
+
+See [docs/PACKAGING.md](docs/PACKAGING.md) for full deployment guide.
+
+## Benchmarking
+
+Compare model performance on tool-calling:
+
+```bash
+# Benchmark single model
+python -m onsetlab benchmark --model phi3.5
+
+# Compare models
+python -m onsetlab benchmark --compare "phi3.5,qwen2.5:3b,llama3.2:3b"
+```
+
+See [specs/BENCHMARKING.md](specs/BENCHMARKING.md) for methodology.
+
 ## Architecture
 
 ```
-Task → Planner → Executor → Verifier → Solver → Answer
-         ↓          ↓
-      REWOO     (ReAct fallback if needed)
+Task → Router → Strategy Selection
+                    ↓
+         ┌─────────┼─────────┐
+         ↓         ↓         ↓
+      DIRECT    REWOO     REACT
+         ↓         ↓         ↓
+                   └─────────┘
+                       ↓
+                   Verifier → Solver → Answer
 ```
 
-1. **Planner** - creates step-by-step execution plan
-2. **Verifier** - validates plan before execution
-3. **Executor** - runs tools with dependency resolution
-4. **Solver** - synthesizes final answer from results
-5. **ReAct fallback** - recovers from planning failures
+1. **Router** - selects optimal strategy (DIRECT/REWOO/REACT)
+2. **Planner** - creates step-by-step execution plan (REWOO)
+3. **Verifier** - validates plan before execution
+4. **Executor** - runs tools with dependency resolution
+5. **Solver** - synthesizes final answer from results
+6. **ReAct fallback** - recovers from planning failures
 
 ## Options
 
@@ -108,6 +154,7 @@ agent = Agent(
     mcp_servers=[...],        # MCP servers
     memory=True,              # conversation memory
     verify=True,              # pre-execution verification
+    routing=True,             # intelligent strategy selection
     react_fallback=True,      # fallback on REWOO failure
     debug=False               # verbose logging
 )
