@@ -6,27 +6,21 @@ Only triggered when REWOO planning/execution fails.
 """
 
 import re
+import json
 from typing import List, Dict, Any, Optional, Tuple
 
 from ..model.base import BaseModel
 from ..tools.base import BaseTool
 
 
-REACT_PROMPT = '''Solve the task step by step using ONE tool at a time.
+REACT_PROMPT = '''Use ONE tool to complete the task.
 
-TOOLS:
+Tools:
 {tools_description}
 
-FORMAT:
-Thought: [your reasoning]
-Action: tool_name(param="value")
-
-IMPORTANT:
-- Use EXACT tool names
-- For file paths, use complete paths like "./filename.txt" not just "."
-- Focus only on completing the original task
-- Don't use unrelated tools
-
+Format:
+Thought: [reason]
+Action: tool(param="value")
 {context}
 Task: {task}
 {scratchpad}
@@ -176,10 +170,9 @@ class ReactFallback:
         return "\n".join(lines)
     
     def _format_single_tool(self, name: str, tool: BaseTool, detailed: bool = False) -> str:
-        """Format a single tool."""
+        """Format a single tool - SLM optimized."""
         params = tool.parameters
         
-        # Handle both formats
         if "properties" in params:
             props = params.get("properties", {})
             required = params.get("required", [])
@@ -188,20 +181,25 @@ class ReactFallback:
             required = [p for p, d in params.items() 
                        if isinstance(d, dict) and d.get("required")]
         
-        param_parts = []
+        # Only show required params
+        req_parts = []
         for p, details in props.items():
             if not isinstance(details, dict):
                 continue
-            p_type = details.get("type", "string")
-            req = "*" if p in required or details.get("required") else ""
-            param_parts.append(f'{p}{req}: {p_type}')
+            is_req = p in required or details.get("required")
+            if not is_req:
+                continue
+            
+            if "enum" in details:
+                req_parts.append(f'{p}="{details["enum"][0]}"')
+            elif details.get("type") == "integer":
+                req_parts.append(f'{p}=N')
+            else:
+                req_parts.append(f'{p}="..."')
         
-        params_str = ", ".join(param_parts)
-        
-        if detailed:
-            return f"- {name}({params_str})\n  Description: {tool.description[:200]}"
-        else:
-            return f"- {name}({params_str}): {tool.description[:80]}"
+        sig = f"{name}({', '.join(req_parts)})" if req_parts else f"{name}()"
+        desc = tool.description[:60]
+        return f"{sig} - {desc}"
     
     def _parse_response(
         self,
@@ -238,34 +236,98 @@ class ReactFallback:
         return thought, action, is_final, final_answer
     
     def _parse_params(self, params_str: str) -> Dict[str, Any]:
-        """Parse parameters from action string."""
+        """Parse parameters from action string. Handles strings, numbers, arrays, objects."""
         params = {}
+        params_str = params_str.strip()
         
-        # Extract named params: param="value"
-        for match in re.finditer(r'(\w+)\s*=\s*"([^"]*)"', params_str):
-            params[match.group(1)] = match.group(2)
+        if not params_str:
+            return params
         
-        # Extract unquoted values: param=123 or param=word
-        for match in re.finditer(r'(\w+)\s*=\s*([^,\s\)"]+)', params_str):
-            key = match.group(1)
-            if key in params:
-                continue
-            value = match.group(2).strip()
+        i = 0
+        while i < len(params_str):
+            # Skip whitespace and commas
+            while i < len(params_str) and params_str[i] in ' ,\t':
+                i += 1
+            if i >= len(params_str):
+                break
             
-            # Skip None/null
-            if value.lower() in ('none', 'null'):
-                continue
+            # Find parameter name
+            name_match = re.match(r'(\w+)\s*=\s*', params_str[i:])
+            if not name_match:
+                break
             
-            # Handle numbers
-            if re.match(r'^\d+$', value):
-                params[key] = int(value)
-            elif re.match(r'^[\d.]+$', value):
+            param_name = name_match.group(1)
+            i += name_match.end()
+            
+            if i >= len(params_str):
+                break
+            
+            char = params_str[i]
+            
+            if char == '"':
+                # Quoted string
+                end = params_str.find('"', i + 1)
+                if end == -1:
+                    end = len(params_str)
+                value = params_str[i+1:end]
+                i = end + 1
+                if value.lower() not in ('none', 'null'):
+                    params[param_name] = value
+            
+            elif char == '[':
+                # Array
+                depth, j = 1, i + 1
+                while j < len(params_str) and depth > 0:
+                    if params_str[j] == '[': depth += 1
+                    elif params_str[j] == ']': depth -= 1
+                    elif params_str[j] == '"':
+                        j += 1
+                        while j < len(params_str) and params_str[j] != '"':
+                            j += 1
+                    j += 1
                 try:
-                    params[key] = float(value)
+                    params[param_name] = json.loads(params_str[i:j])
                 except:
-                    params[key] = value
+                    params[param_name] = params_str[i:j]
+                i = j
+            
+            elif char == '{':
+                # Object
+                depth, j = 1, i + 1
+                while j < len(params_str) and depth > 0:
+                    if params_str[j] == '{': depth += 1
+                    elif params_str[j] == '}': depth -= 1
+                    elif params_str[j] == '"':
+                        j += 1
+                        while j < len(params_str) and params_str[j] != '"':
+                            j += 1
+                    j += 1
+                try:
+                    params[param_name] = json.loads(params_str[i:j])
+                except:
+                    params[param_name] = params_str[i:j]
+                i = j
+            
             else:
-                params[key] = value
+                # Unquoted value
+                match = re.match(r'([^,\)\s]+)', params_str[i:])
+                if match:
+                    value = match.group(1)
+                    i += match.end()
+                    if value.lower() in ('none', 'null'):
+                        continue
+                    elif value.lower() == 'true':
+                        params[param_name] = True
+                    elif value.lower() == 'false':
+                        params[param_name] = False
+                    elif re.match(r'^-?\d+$', value):
+                        params[param_name] = int(value)
+                    elif re.match(r'^-?\d+\.\d+$', value):
+                        params[param_name] = float(value)
+                    else:
+                        params[param_name] = value
+                else:
+                    i += 1
         
         return params
     

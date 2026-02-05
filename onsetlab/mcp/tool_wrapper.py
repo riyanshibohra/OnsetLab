@@ -4,17 +4,14 @@ MCP Tool Wrapper for OnsetLab.
 Converts MCP tools to BaseTool instances so the agent can use them seamlessly.
 """
 
+import json
 from typing import Dict, Any, List, Optional
 from ..tools.base import BaseTool
 from .client import MCPTool, MCPClient, SyncMCPClient, MCPServerConfig
 
 
 class MCPToolWrapper(BaseTool):
-    """
-    Wraps an MCP tool as a BaseTool.
-    
-    This allows the agent to use MCP tools just like built-in tools.
-    """
+    """Wraps an MCP tool as a BaseTool with type coercion."""
     
     def __init__(
         self,
@@ -25,10 +22,10 @@ class MCPToolWrapper(BaseTool):
         self._mcp_tool = mcp_tool
         self._client = client
         self._server_name = server_name
+        self._raw_schema = mcp_tool.input_schema
     
     @property
     def name(self) -> str:
-        # Prefix with server name to avoid conflicts
         if self._server_name:
             return f"{self._server_name}_{self._mcp_tool.name}"
         return self._mcp_tool.name
@@ -39,12 +36,9 @@ class MCPToolWrapper(BaseTool):
     
     @property
     def parameters(self) -> Dict[str, Any]:
-        """Convert MCP input schema to our parameter format."""
-        schema = self._mcp_tool.input_schema
-        
-        # MCP uses JSON Schema format
-        properties = schema.get("properties", {})
-        required = schema.get("required", [])
+        """Convert MCP input schema to parameter format."""
+        properties = self._raw_schema.get("properties", {})
+        required = self._raw_schema.get("required", [])
         
         params = {}
         for param_name, param_info in properties.items():
@@ -53,30 +47,87 @@ class MCPToolWrapper(BaseTool):
                 "description": param_info.get("description", ""),
                 "required": param_name in required,
             }
-            
-            # Include enum if present
             if "enum" in param_info:
                 params[param_name]["enum"] = param_info["enum"]
-            
-            # Include default if present
             if "default" in param_info:
                 params[param_name]["default"] = param_info["default"]
+            if "items" in param_info:
+                params[param_name]["items"] = param_info["items"]
         
         return params
     
+    def _coerce_params(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Coerce parameters to match expected types."""
+        properties = self._raw_schema.get("properties", {})
+        result = {}
+        
+        for param_name, value in kwargs.items():
+            if param_name not in properties:
+                result[param_name] = value
+                continue
+            
+            expected_type = properties[param_name].get("type", "string")
+            
+            # Coerce string to array/object via JSON
+            if isinstance(value, str) and expected_type in ("array", "object"):
+                try:
+                    parsed = json.loads(value)
+                    if (expected_type == "array" and isinstance(parsed, list)) or \
+                       (expected_type == "object" and isinstance(parsed, dict)):
+                        result[param_name] = parsed
+                        continue
+                except json.JSONDecodeError:
+                    pass
+            
+            # Coerce string to int/number/bool
+            if isinstance(value, str):
+                if expected_type == "integer":
+                    try:
+                        result[param_name] = int(value)
+                        continue
+                    except ValueError:
+                        pass
+                elif expected_type == "number":
+                    try:
+                        result[param_name] = float(value)
+                        continue
+                    except ValueError:
+                        pass
+                elif expected_type == "boolean":
+                    if value.lower() in ("true", "1", "yes"):
+                        result[param_name] = True
+                        continue
+                    elif value.lower() in ("false", "0", "no"):
+                        result[param_name] = False
+                        continue
+            
+            result[param_name] = value
+        
+        return result
+    
     def execute(self, **kwargs) -> str:
-        """Execute the MCP tool."""
-        try:
-            result = self._client.call_tool(self._mcp_tool.name, kwargs)
-            # Debug: log what we got
-            import logging
-            logging.getLogger(__name__).debug(f"MCP tool {self._mcp_tool.name} result: {result}")
-            if result is None or result == "":
-                return "No result returned"
-            return str(result)
-        except Exception as e:
-            import traceback
-            return f"Error calling {self._mcp_tool.name}: {e}\n{traceback.format_exc()}"
+        """Execute the MCP tool with auto-reconnect on failure."""
+        params = self._coerce_params(kwargs)
+        
+        # Try once, reconnect and retry if connection lost
+        for attempt in range(2):
+            try:
+                result = self._client.call_tool(self._mcp_tool.name, params)
+                return str(result) if result else "No result returned"
+            except (ConnectionError, BrokenPipeError, OSError) as e:
+                if attempt == 0:
+                    # Try to reconnect
+                    try:
+                        self._client.disconnect()
+                        self._client.connect()
+                    except Exception:
+                        return f"Error: Connection lost and reconnect failed - {e}"
+                else:
+                    return f"Error: Connection failed - {e}"
+            except Exception as e:
+                return f"Error: {e}"
+        
+        return "Error: Unexpected execution path"
 
 
 class MCPToolLoader:

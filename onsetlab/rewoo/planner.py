@@ -1,27 +1,25 @@
 """REWOO Planner - generates execution plan upfront."""
 
 import re
+import json
 from typing import List, Dict, Any, Optional
 
 from ..model.base import BaseModel
 from ..tools.base import BaseTool
 
 
-# Planner prompt with dynamic few-shot examples
-PLANNER_PROMPT = '''You are a tool-calling assistant. Call ONE tool to complete the task.
+# Planner prompt - optimized for small models
+PLANNER_PROMPT = '''Call ONE tool to complete the task.
 
-AVAILABLE TOOLS:
+Tools:
 {tools_description}
-
-FORMAT: #E1 = tool_name(param1="value", param2=123)
 {examples_section}
-RULES:
-1. Use EXACT tool names from the list (no abbreviations)
-2. Use EXACT values from the task (copy numbers, strings, IDs exactly)
-3. Use named parameters: param="value" (not positional)
+Rules:
+- Copy exact values from task
+- Use format: tool(param="value")
 {context_section}
 Task: {task}
-Answer: #E1 ='''
+#E1 ='''
 
 
 class Planner:
@@ -55,17 +53,16 @@ class Planner:
         response = self.model.generate(
             prompt,
             temperature=0.0,
-            max_tokens=100,
+            max_tokens=150,
             stop_sequences=["\n\n", "\n#E2", "Note:", "Explanation:", "---", "Task:"],
         )
         
-        # Clean up response - remove leading #E1= if model repeated it
+        # Clean response and ensure #E1 prefix
         response = response.strip()
-        if response.startswith('#E1') or response.startswith('#E1 '):
-            # Model included the prefix, use as-is
+        # Remove duplicate #E1 if model added it
+        if response.startswith('#E1'):
             full_response = response
         else:
-            # Model didn't include prefix, add it
             full_response = "#E1 = " + response
         
         if self.debug:
@@ -80,14 +77,13 @@ class Planner:
         
         return steps
     
-    def _generate_examples(self, max_examples: int = 3) -> str:
-        """Generate example tool calls based on available tools."""
+    def _generate_examples(self, max_examples: int = 2) -> str:
+        """Generate minimal concrete examples for small models."""
         examples = []
         
         for name, tool in list(self.tools.items())[:max_examples]:
             tool_params = tool.parameters
             
-            # Handle both formats
             if "properties" in tool_params:
                 params = tool_params.get("properties", {})
                 required = tool_params.get("required", [])
@@ -100,57 +96,88 @@ class Planner:
             example_params = []
             for param_name, param_info in params.items():
                 if param_name in required or (isinstance(param_info, dict) and param_info.get("required")):
-                    param_type = param_info.get("type", "string") if isinstance(param_info, dict) else "string"
+                    if not isinstance(param_info, dict):
+                        continue
+                    param_type = param_info.get("type", "string")
                     
-                    # Generate sample value based on type
-                    if param_type == "integer":
+                    # Use concrete realistic values
+                    if "enum" in param_info:
+                        example_params.append(f'{param_name}="{param_info["enum"][0]}"')
+                    elif param_type == "integer":
                         example_params.append(f'{param_name}=1')
+                    elif param_type == "number":
+                        example_params.append(f'{param_name}=1.0')
                     elif param_type == "boolean":
                         example_params.append(f'{param_name}=true')
+                    elif param_type == "array":
+                        example_params.append(f'{param_name}=["item"]')
                     else:
-                        example_params.append(f'{param_name}="value"')
+                        example_params.append(f'{param_name}="example"')
             
-            if example_params:
-                params_str = ", ".join(example_params)
-                examples.append(f"- #E1 = {name}({params_str})")
+            params_str = ", ".join(example_params) if example_params else ""
+            examples.append(f"{name}({params_str})")
         
-        return "\n".join(examples) if examples else ""
+        return "Examples: " + ", ".join(examples) if examples else ""
     
     def _format_tools_description(self) -> str:
-        """Format tools for the prompt with clear parameter details."""
+        """Format tools for SLM-optimized prompts - minimal, clear, no confusing syntax."""
         lines = []
+        
         for name, tool in self.tools.items():
             tool_params = tool.parameters
             
-            # Handle both formats:
-            # 1. JSON Schema: {"properties": {...}, "required": [...]}
-            # 2. Flat format: {"param1": {...}, "param2": {...}}
+            # Handle both formats
             if "properties" in tool_params:
                 params = tool_params.get("properties", {})
                 required = tool_params.get("required", [])
             else:
-                # Flat format from MCP wrapper
                 params = tool_params
                 required = [p for p, details in params.items() 
                            if isinstance(details, dict) and details.get("required")]
             
-            param_parts = []
+            # Only show required params to reduce confusion
+            req_parts = []
+            opt_parts = []
+            
             for p, details in params.items():
                 if not isinstance(details, dict):
                     continue
-                p_type = details.get("type", "string")
-                req = " [required]" if p in required or details.get("required") else ""
                 
-                # Show enum values if available
+                p_type = details.get("type", "string")
+                is_req = p in required or details.get("required")
+                
+                # Format value hint - SLM friendly (no confusing {a|b} syntax)
                 if "enum" in details:
-                    enum_values = "|".join(str(v) for v in details["enum"])
-                    param_parts.append(f'{p}="{{{enum_values}}}"{req}')
+                    # Show first enum value as example, mention others exist
+                    enum_vals = details["enum"]
+                    if len(enum_vals) <= 3:
+                        hint = " or ".join(f'"{v}"' for v in enum_vals)
+                    else:
+                        hint = f'"{enum_vals[0]}" (or: {", ".join(enum_vals[1:3])}...)'
+                    part = f'{p}={hint}'
+                elif p_type == "array":
+                    part = f'{p}=[...]'
+                elif p_type == "boolean":
+                    part = f'{p}=true'
+                elif p_type in ("integer", "number"):
+                    part = f'{p}=N'
                 else:
-                    param_parts.append(f'{p}: {p_type}{req}')
+                    part = f'{p}="..."'
+                
+                if is_req:
+                    req_parts.append(part)
+                else:
+                    opt_parts.append(part)
             
-            params_str = ", ".join(param_parts)
-            lines.append(f"{name}({params_str})")
-            lines.append(f"  - {tool.description}")
+            # Build compact signature - required params only for most tools
+            if req_parts:
+                sig = f"{name}({', '.join(req_parts)})"
+            else:
+                sig = f"{name}()"
+            
+            # Truncate description to 80 chars
+            desc = tool.description[:80] + "..." if len(tool.description) > 80 else tool.description
+            lines.append(f"{sig} - {desc}")
         
         return "\n".join(lines)
     
@@ -220,64 +247,134 @@ class Planner:
         return steps
     
     def _parse_params(self, params_str: str) -> Dict[str, Any]:
-        """Parse parameter string into dict."""
+        """Parse parameter string into dict. Handles arrays, objects, strings, numbers."""
         params = {}
         params_str = params_str.strip()
         
         if not params_str:
             return params
         
-        # First, extract named quoted values: param="value"
-        quoted_pattern = r'(\w+)\s*=\s*"([^"]*)"'
-        for match in re.finditer(quoted_pattern, params_str):
-            params[match.group(1)] = match.group(2)
-        
-        # Remove matched quoted params
-        remaining = re.sub(quoted_pattern, '', params_str).strip()
-        
-        # Extract unquoted values: param=#E1 or param=123 or param=word
-        unquoted_pattern = r'(\w+)\s*=\s*([^,\s\)]+)'
-        for match in re.finditer(unquoted_pattern, remaining):
-            key = match.group(1)
-            if key in params:
-                continue
-            value = match.group(2).strip()
+        # Try to extract param=value pairs, handling complex types
+        i = 0
+        while i < len(params_str):
+            # Skip whitespace and commas
+            while i < len(params_str) and params_str[i] in ' ,\t\n':
+                i += 1
+            if i >= len(params_str):
+                break
             
-            # Skip None/null values - model shouldn't specify these
-            if value.lower() in ('none', 'null', 'undefined'):
-                continue
+            # Find parameter name
+            name_match = re.match(r'(\w+)\s*=\s*', params_str[i:])
+            if not name_match:
+                # No more named params, check for positional
+                break
             
-            # Handle #E references
-            if value.startswith('#E'):
-                params[key] = value
-            # Handle booleans
-            elif value.lower() == 'true':
-                params[key] = True
-            elif value.lower() == 'false':
-                params[key] = False
-            # Handle numbers
-            elif re.match(r'^[\d.\-]+$', value):
+            param_name = name_match.group(1)
+            i += name_match.end()
+            
+            if i >= len(params_str):
+                break
+            
+            # Parse the value based on what character we see
+            char = params_str[i]
+            
+            if char == '"':
+                # Quoted string
+                end = params_str.find('"', i + 1)
+                if end == -1:
+                    end = len(params_str)
+                value = params_str[i+1:end]
+                i = end + 1
+                # Skip None/null string values
+                if value.lower() not in ('none', 'null', 'undefined'):
+                    params[param_name] = value
+            
+            elif char == "'":
+                # Single-quoted string
+                end = params_str.find("'", i + 1)
+                if end == -1:
+                    end = len(params_str)
+                value = params_str[i+1:end]
+                i = end + 1
+                if value.lower() not in ('none', 'null', 'undefined'):
+                    params[param_name] = value
+            
+            elif char == '[':
+                # Array - find matching ]
+                value, end_pos = self._extract_bracket(params_str, i, '[', ']')
+                i = end_pos
                 try:
-                    params[key] = float(value) if '.' in value else int(value)
-                except ValueError:
-                    params[key] = value
-            # Handle plain string values (like operation=difference)
+                    params[param_name] = json.loads(value)
+                except json.JSONDecodeError:
+                    params[param_name] = value
+            
+            elif char == '{':
+                # Object - find matching }
+                value, end_pos = self._extract_bracket(params_str, i, '{', '}')
+                i = end_pos
+                try:
+                    params[param_name] = json.loads(value)
+                except json.JSONDecodeError:
+                    params[param_name] = value
+            
             else:
-                params[key] = value
+                # Unquoted value (number, boolean, #E ref, or plain string)
+                match = re.match(r'([^,\)\s]+)', params_str[i:])
+                if match:
+                    value = match.group(1).strip()
+                    i += match.end()
+                    
+                    # Skip None/null
+                    if value.lower() in ('none', 'null', 'undefined'):
+                        continue
+                    
+                    # Parse value type
+                    if value.startswith('#E'):
+                        params[param_name] = value
+                    elif value.lower() == 'true':
+                        params[param_name] = True
+                    elif value.lower() == 'false':
+                        params[param_name] = False
+                    elif re.match(r'^-?\d+$', value):
+                        params[param_name] = int(value)
+                    elif re.match(r'^-?\d+\.\d+$', value):
+                        params[param_name] = float(value)
+                    else:
+                        params[param_name] = value
+                else:
+                    i += 1
         
-        # Handle positional arguments: "value1", "value2", ...
-        # This happens when model outputs ToolName("arg1", "arg2") instead of named params
+        # Handle positional arguments if no named params found
         if not params:
-            # Extract all quoted strings as positional args
             positional_matches = re.findall(r'"([^"]*)"', params_str)
             if positional_matches:
-                for i, val in enumerate(positional_matches):
-                    params[f"_positional_{i}"] = val
+                for idx, val in enumerate(positional_matches):
+                    params[f"_positional_{idx}"] = val
             elif '=' not in params_str:
-                # Single unquoted value
                 params["_positional_0"] = params_str.strip('"\'')
         
         return params
+    
+    def _extract_bracket(self, s: str, start: int, open_b: str, close_b: str) -> tuple:
+        """Extract content within balanced brackets."""
+        depth = 0
+        i = start
+        while i < len(s):
+            if s[i] == open_b:
+                depth += 1
+            elif s[i] == close_b:
+                depth -= 1
+                if depth == 0:
+                    return s[start:i+1], i + 1
+            elif s[i] == '"':
+                # Skip quoted strings
+                i += 1
+                while i < len(s) and s[i] != '"':
+                    if s[i] == '\\':
+                        i += 1
+                    i += 1
+            i += 1
+        return s[start:], len(s)
     
     def _deduplicate_steps(self, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Remove duplicate steps."""
