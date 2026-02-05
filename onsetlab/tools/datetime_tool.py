@@ -1,8 +1,9 @@
 """DateTime tool for date and time operations."""
 
 from datetime import datetime, timedelta
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import calendar
+import re
 
 from .base import BaseTool
 
@@ -13,7 +14,7 @@ class DateTime(BaseTool):
     """
     
     name = "DateTime"
-    description = "Get current date/time, calculate date differences, or find day of week for any date."
+    description = "Get current date/time, day of week for a date, add days to a date, or calculate days between dates."
     
     @property
     def parameters(self) -> Dict[str, Any]:
@@ -22,16 +23,16 @@ class DateTime(BaseTool):
             "properties": {
                 "operation": {
                     "type": "string",
-                    "description": "Operation: 'now' (current datetime), 'day_of_week' (for a date), 'add_days' (add/subtract days), 'difference' (days between dates)",
+                    "description": "Operation to perform",
                     "enum": ["now", "day_of_week", "add_days", "difference"]
                 },
                 "date": {
                     "type": "string",
-                    "description": "Date in YYYY-MM-DD format (for day_of_week, add_days)"
+                    "description": "Date (accepts: 2000-01-01, January 1 2000, Jan 1 2000, etc.)"
                 },
                 "date2": {
                     "type": "string",
-                    "description": "Second date in YYYY-MM-DD format (for difference)"
+                    "description": "Second date for difference calculation"
                 },
                 "days": {
                     "type": "integer",
@@ -39,11 +40,50 @@ class DateTime(BaseTool):
                 },
                 "timezone": {
                     "type": "string",
-                    "description": "Timezone name (e.g., 'UTC', 'US/Eastern'). Default: local time."
+                    "description": "Timezone (e.g., 'UTC'). Default: local."
                 }
             },
             "required": ["operation"]
         }
+    
+    def _parse_date(self, date_str: str) -> Optional[datetime]:
+        """Parse date string with multiple format support."""
+        if not date_str:
+            return None
+        
+        # Clean up the string
+        date_str = date_str.strip()
+        date_lower = date_str.lower()
+        
+        # Handle special keywords
+        if date_lower in ["now", "today", "current"]:
+            return datetime.now()
+        if date_lower == "yesterday":
+            return datetime.now() - timedelta(days=1)
+        if date_lower == "tomorrow":
+            return datetime.now() + timedelta(days=1)
+        
+        # Common date formats to try
+        formats = [
+            "%Y-%m-%d",           # 2000-01-01
+            "%B %d, %Y",          # January 1, 2000
+            "%B %d %Y",           # January 1 2000
+            "%b %d, %Y",          # Jan 1, 2000
+            "%b %d %Y",           # Jan 1 2000
+            "%d %B %Y",           # 1 January 2000
+            "%d %b %Y",           # 1 Jan 2000
+            "%m/%d/%Y",           # 01/01/2000
+            "%d/%m/%Y",           # 01/01/2000 (European)
+            "%Y/%m/%d",           # 2000/01/01
+        ]
+        
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+        
+        return None
     
     def execute(
         self,
@@ -112,19 +152,28 @@ class DateTime(BaseTool):
     
     def _get_day_of_week(self, date_str: str) -> str:
         """Get day of week for a date."""
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        dt = self._parse_date(date_str)
+        if not dt:
+            return f"Error: Could not parse date '{date_str}'"
         day_name = calendar.day_name[dt.weekday()]
-        return f"{date_str} is a {day_name}"
+        formatted = dt.strftime("%Y-%m-%d")
+        return f"{formatted} is a {day_name}"
     
     def _add_days(self, date_str: str, days: int) -> str:
         """Add or subtract days from a date."""
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        dt = self._parse_date(date_str)
+        if not dt:
+            return f"Error: Could not parse date '{date_str}'"
         new_dt = dt + timedelta(days=days)
         return new_dt.strftime("%Y-%m-%d")
     
     def _get_difference(self, date1_str: str, date2_str: str) -> str:
         """Calculate difference between two dates."""
-        dt1 = datetime.strptime(date1_str, "%Y-%m-%d")
-        dt2 = datetime.strptime(date2_str, "%Y-%m-%d")
+        dt1 = self._parse_date(date1_str)
+        dt2 = self._parse_date(date2_str)
+        if not dt1:
+            return f"Error: Could not parse date '{date1_str}'"
+        if not dt2:
+            return f"Error: Could not parse date '{date2_str}'"
         diff = abs((dt2 - dt1).days)
-        return f"{diff} days between {date1_str} and {date2_str}"
+        return f"{diff} days between {dt1.strftime('%Y-%m-%d')} and {dt2.strftime('%Y-%m-%d')}"

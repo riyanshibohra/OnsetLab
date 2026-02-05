@@ -1,11 +1,10 @@
 """
 OnsetLab Agent - REWOO-based agent with tool calling.
-
-Plan once, execute fast, verify always.
 """
 
 from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
+from datetime import datetime
 
 from .model.base import BaseModel
 from .model.ollama import OllamaModel
@@ -31,14 +30,6 @@ class AgentResult:
 class Agent:
     """
     OnsetLab Agent - REWOO-based agent for reliable tool calling.
-    
-    Uses the REWOO (Reasoning Without Observation) strategy:
-    1. Plan all tool calls upfront
-    2. Execute tools (parallel where possible)
-    3. Verify results
-    4. Synthesize answer
-    
-    This results in 2-3 SLM calls vs 5-10 for ReAct agents.
     """
     
     def __init__(
@@ -48,20 +39,10 @@ class Agent:
         mcp_servers: List[MCPServer] = None,
         memory: bool = True,
         verify: bool = True,
-        max_replans: int = 2,
+        max_replans: int = 1,
+        debug: bool = False,
     ):
-        """
-        Create an agent.
-        
-        Args:
-            model: Model name (str) or BaseModel instance.
-                   String format: "phi3.5", "qwen2.5:3b", "llama3.2:3b"
-            tools: List of built-in tools.
-            mcp_servers: List of MCP server configs.
-            memory: Enable conversation memory.
-            verify: Enable verification step.
-            max_replans: Max replanning attempts on failure.
-        """
+        """Create an agent."""
         # Setup model
         if isinstance(model, str):
             self._model = OllamaModel(model)
@@ -74,103 +55,109 @@ class Agent:
         
         # Setup components
         all_tools = self._collect_all_tools()
-        self._planner = Planner(self._model, all_tools)
+        self._planner = Planner(self._model, all_tools, debug=debug)
         self._executor = Executor(all_tools)
         self._verifier = Verifier(self._model) if verify else None
         self._solver = Solver(self._model)
         
-        # Setup memory
-        self._memory = ConversationMemory() if memory else None
+        # Setup memory - stores conversation with results
+        self._memory = ConversationMemory(max_turns=10) if memory else None
+        self._last_results: Dict[str, str] = {}  # Store last tool results
         
         # Settings
         self._verify = verify
         self._max_replans = max_replans
+        self._debug = debug
     
     def _collect_all_tools(self) -> List[BaseTool]:
-        """Collect all tools from built-in and MCP servers."""
-        all_tools = list(self._tools)
-        # TODO: Add MCP tools when implemented
-        return all_tools
+        """Collect all tools."""
+        return list(self._tools)
+    
+    def _get_system_context(self) -> str:
+        """Get system context with current datetime."""
+        now = datetime.now()
+        return f"Current datetime: {now.strftime('%A, %B %d, %Y at %I:%M %p')}"
+    
+    def _get_context(self) -> Optional[str]:
+        """Get full context including system info and conversation history."""
+        lines = []
+        
+        # Always include system context (current datetime)
+        lines.append(self._get_system_context())
+        
+        # Add conversation memory if available
+        if self._memory is not None and len(self._memory) > 0:
+            if self._debug:
+                print(f"[DEBUG] Memory has {len(self._memory)} messages")
+            
+            messages = self._memory.get_last_n_messages(6)
+            if messages:
+                lines.append("\nConversation:")
+                for msg in messages:
+                    role = "User" if msg["role"] == "user" else "Assistant"
+                    content = msg["content"]
+                    if len(content) > 300:
+                        content = content[:300] + "..."
+                    lines.append(f"  {role}: {content}")
+        
+        # Add last results if available
+        if self._last_results:
+            lines.append("\nPrevious tool results:")
+            for step_id, result in self._last_results.items():
+                lines.append(f"  {step_id} = {result}")
+        
+        return "\n".join(lines)
     
     def run(self, query: str) -> AgentResult:
-        """
-        Run a query and return the result.
-        
-        Args:
-            query: User query/task.
-            
-        Returns:
-            AgentResult with answer, plan, results, etc.
-        """
+        """Run a query."""
         slm_calls = 0
         
-        # Get conversation context
-        context = None
-        if self._memory and len(self._memory) > 0:
-            context = self._memory.get_context_string()
+        # Get context
+        context = self._get_context()
         
-        # Add user message to memory
-        if self._memory:
-            self._memory.add_user_message(query)
+        if self._debug:
+            print(f"\n[DEBUG] Context:\n{context}\n")
         
-        # Plan
+        # Plan (1 SLM call)
         plan = self._planner.plan(query, context)
         slm_calls += 1
         
-        # Handle case where no tools needed
-        if not plan:
-            answer = self._solver.solve(query, [], {}, context)
-            slm_calls += 1
-            if self._memory:
-                self._memory.add_assistant_message(answer)
-            return AgentResult(
-                answer=answer,
-                plan=[],
-                results={},
-                verified=True,
-                slm_calls=slm_calls
-            )
-        
-        # Execute
-        results = self._executor.execute(plan)
-        
-        # Verify (with replanning)
-        verified = True
-        replan_count = 0
-        
-        while self._verify and replan_count < self._max_replans:
-            is_valid, reason = self._verifier.verify(query, plan, results)
-            slm_calls += 1
-            
-            if is_valid:
-                break
-            
-            # Replan with error context
-            replan_context = f"Previous attempt failed: {reason}"
-            if context:
-                replan_context = f"{context}\n\n{replan_context}"
-            
-            plan = self._planner.plan(query, replan_context)
-            slm_calls += 1
+        # Execute if we have a plan
+        if plan:
             results = self._executor.execute(plan)
-            replan_count += 1
+            self._last_results = results  # Store for next turn
+        else:
+            results = {}
+            self._last_results = {}
         
-        if replan_count >= self._max_replans:
-            verified = False
+        # Verify (0-1 SLM calls) - skip for empty plans
+        verified = True
+        if plan and self._verify and self._verifier:
+            is_valid, reason = self._verifier.verify(query, plan, results)
+            if "SLM" in reason:
+                slm_calls += 1
+            
+            if not is_valid and self._max_replans > 0:
+                error_context = f"{context or ''}\nError: {reason}"
+                plan = self._planner.plan(query, error_context)
+                slm_calls += 1
+                if plan:
+                    results = self._executor.execute(plan)
+                    self._last_results = results
         
-        # Solve
+        # Solve (1 SLM call)
         answer = self._solver.solve(query, plan, results, context)
         slm_calls += 1
         
-        # Add to memory
-        if self._memory:
-            self._memory.add_assistant_message(answer)
-            for step_id, result in results.items():
-                tool_name = next(
-                    (s["tool"] for s in plan if s["id"] == step_id),
-                    "unknown"
-                )
-                self._memory.add_tool_result(tool_name, result)
+        # Update memory (use 'is not None' because empty memory is falsy)
+        if self._memory is not None:
+            self._memory.add_user_message(query)
+            # Include the result in the assistant message for memory
+            if results:
+                result_summary = ", ".join([f"{k}={v}" for k, v in results.items()])
+                self._memory.add_assistant_message(f"{answer} [Results: {result_summary}]")
+            else:
+                self._memory.add_assistant_message(answer)
         
         return AgentResult(
             answer=answer,
@@ -181,44 +168,32 @@ class Agent:
         )
     
     def chat(self, message: str) -> str:
-        """
-        Interactive chat - returns just the answer string.
-        
-        Args:
-            message: User message.
-            
-        Returns:
-            Assistant response.
-        """
-        result = self.run(message)
-        return result.answer
+        """Interactive chat."""
+        return self.run(message).answer
     
     def clear_memory(self):
-        """Clear conversation memory."""
-        if self._memory:
+        """Clear memory."""
+        if self._memory is not None:
             self._memory.clear()
+        self._last_results = {}
     
     def save_memory(self, path: str):
-        """Save conversation memory to file."""
-        if self._memory:
+        """Save memory."""
+        if self._memory is not None:
             self._memory.save(path)
     
     def load_memory(self, path: str):
-        """Load conversation memory from file."""
-        if self._memory:
+        """Load memory."""
+        if self._memory is not None:
             self._memory.load(path)
     
     @property
     def tools(self) -> Dict[str, BaseTool]:
-        """Get all available tools."""
         return {t.name: t for t in self._tools}
     
     @property
     def model_name(self) -> str:
-        """Get model name."""
         return self._model.model_name
     
     def __repr__(self) -> str:
-        tool_count = len(self._tools)
-        mcp_count = len(self._mcp_servers)
-        return f"<Agent model={self.model_name} tools={tool_count} mcp={mcp_count}>"
+        return f"<Agent model={self.model_name} tools={len(self._tools)} mcp={len(self._mcp_servers)}>"

@@ -5,33 +5,26 @@ from typing import List, Dict, Any, Tuple
 from ..model.base import BaseModel
 
 
-VERIFIER_PROMPT = '''You are a verification assistant. Check if the execution results make sense.
+VERIFIER_PROMPT = '''Check if these execution results are valid for the given task.
 
 Task: {task}
 
-Plan that was executed:
-{plan_summary}
+Execution:
+{execution_summary}
 
-Results:
-{results_summary}
+Rules:
+- If any result shows "Error:", respond INVALID
+- If results seem reasonable for the task, respond VALID
+- If results don't make sense, respond INVALID
 
-Instructions:
-1. Check if each result seems reasonable for its tool
-2. Check if the math/logic makes sense
-3. Check for any errors in results
-
-Respond with ONLY one of:
-- "VALID" if all results look correct
-- "INVALID: <reason>" if something is wrong
-
-Response:'''
+Respond with ONLY one word: VALID or INVALID'''
 
 
 class Verifier:
     """
     REWOO Verifier - checks if execution results are valid.
     
-    Uses the SLM to verify results make sense before synthesizing answer.
+    Uses quick verification for simple cases, SLM for complex cases.
     """
     
     def __init__(self, model: BaseModel):
@@ -60,58 +53,69 @@ class Verifier:
         Returns:
             Tuple of (is_valid, reason).
         """
-        # Quick check for obvious errors
-        for step_id, result in results.items():
-            if isinstance(result, str) and result.startswith("Error:"):
-                return False, f"{step_id} failed: {result}"
+        # First, do quick verification (no SLM call)
+        is_valid, reason = self.quick_verify(results)
+        if not is_valid:
+            return False, reason
         
-        # Use SLM for semantic verification
-        plan_summary = self._format_plan(plan)
-        results_summary = self._format_results(results)
+        # For simple single-step plans, skip SLM verification
+        if len(plan) == 1:
+            return True, "Quick verification passed (single step)"
+        
+        # For multi-step plans, use SLM verification
+        return self._slm_verify(task, plan, results)
+    
+    def _slm_verify(
+        self,
+        task: str,
+        plan: List[Dict[str, Any]],
+        results: Dict[str, str]
+    ) -> Tuple[bool, str]:
+        """Use SLM to verify complex results."""
+        execution_summary = self._format_execution(plan, results)
         
         prompt = VERIFIER_PROMPT.format(
             task=task,
-            plan_summary=plan_summary,
-            results_summary=results_summary
+            execution_summary=execution_summary
         )
         
         response = self.model.generate(
             prompt,
-            temperature=0.1,  # Very low temperature for consistent verification
-            max_tokens=256,
+            temperature=0.0,  # Deterministic
+            max_tokens=10,    # Just need VALID or INVALID
         )
         
-        response = response.strip()
+        response = response.strip().upper()
         
-        if response.startswith("VALID"):
-            return True, "Verification passed"
-        elif response.startswith("INVALID"):
-            reason = response.replace("INVALID:", "").strip()
-            return False, reason
+        if "VALID" in response and "INVALID" not in response:
+            return True, "SLM verification passed"
+        elif "INVALID" in response:
+            return False, "SLM verification failed"
         else:
-            # If model doesn't follow format, assume valid (fail-open)
+            # If unclear, assume valid (fail-open for better UX)
             return True, "Verification inconclusive, proceeding"
     
-    def _format_plan(self, plan: List[Dict[str, Any]]) -> str:
-        """Format plan for prompt."""
+    def _format_execution(
+        self,
+        plan: List[Dict[str, Any]],
+        results: Dict[str, str]
+    ) -> str:
+        """Format execution for prompt."""
         lines = []
         for step in plan:
-            params_str = ", ".join([
-                f'{k}="{v}"' for k, v in step["params"].items()
-            ])
-            lines.append(f'{step["id"]} = {step["tool"]}({params_str})')
-        return "\n".join(lines)
-    
-    def _format_results(self, results: Dict[str, str]) -> str:
-        """Format results for prompt."""
-        lines = []
-        for step_id, result in results.items():
-            lines.append(f"{step_id} = {result}")
+            step_id = step["id"]
+            tool_name = step["tool"]
+            params = step["params"]
+            result = results.get(step_id, "No result")
+            
+            params_str = ", ".join([f'{k}="{v}"' for k, v in params.items()])
+            lines.append(f"{tool_name}({params_str}) → {result}")
+        
         return "\n".join(lines)
     
     def quick_verify(self, results: Dict[str, str]) -> Tuple[bool, str]:
         """
-        Quick verification without SLM (just check for errors).
+        Quick verification without SLM (just check for obvious errors).
         
         Args:
             results: Results from executor.
@@ -121,8 +125,11 @@ class Verifier:
         """
         for step_id, result in results.items():
             if isinstance(result, str):
+                # Check for error messages
                 if result.startswith("Error:"):
                     return False, f"{step_id}: {result}"
-                if result.lower() in ["none", "null", ""]:
+                # Check for empty/null results
+                if result.strip().lower() in ["none", "null", ""]:
                     return False, f"{step_id}: Empty result"
+        
         return True, "Quick verification passed"

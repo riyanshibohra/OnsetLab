@@ -5,37 +5,37 @@ from typing import List, Dict, Any, Optional
 from ..model.base import BaseModel
 
 
-SOLVER_PROMPT = '''You are a helpful assistant. Based on the task and execution results, provide a clear, concise answer.
+SOLVER_PROMPT = '''Answer the user's question using ONLY the execution results below.
 
-Task: {task}
+Question: {task}
 
-Execution results:
+Results:
 {results_summary}
 
-Instructions:
-1. Use the execution results to answer the task
-2. Be concise and direct
-3. Include relevant numbers/data from results
-4. Do NOT make up information not in the results
+Rules:
+- Be concise and direct (1-2 sentences max)
+- Use the actual values from results
+- Do NOT add information not in the results
+- Do NOT explain how you got the answer
 
 Answer:'''
 
 
-SOLVER_WITH_CONTEXT_PROMPT = '''You are a helpful assistant. Based on the conversation and execution results, provide a clear, concise answer.
+SOLVER_WITH_CONTEXT_PROMPT = '''Answer the user's question using the conversation context and execution results.
 
-Conversation context:
+Context:
 {context}
 
-Current task: {task}
+Question: {task}
 
-Execution results:
+Results:
 {results_summary}
 
-Instructions:
-1. Use the execution results to answer the task
-2. Consider the conversation context
-3. Be concise and direct
-4. Include relevant numbers/data from results
+Rules:
+- Be concise and direct (1-2 sentences max)
+- Use values from results and context
+- Do NOT add information not provided
+- Do NOT explain your reasoning
 
 Answer:'''
 
@@ -45,7 +45,7 @@ class Solver:
     REWOO Solver - synthesizes final answer from execution results.
     
     Takes the original task and all tool results, generates a
-    natural language answer for the user.
+    concise natural language answer for the user.
     """
     
     def __init__(self, model: BaseModel):
@@ -74,7 +74,7 @@ class Solver:
             context: Optional conversation context.
             
         Returns:
-            Natural language answer.
+            Concise natural language answer.
         """
         results_summary = self._format_results(plan, results)
         
@@ -92,22 +92,38 @@ class Solver:
         
         response = self.model.generate(
             prompt,
-            temperature=0.5,
-            max_tokens=512,
+            temperature=0.3,  # Slightly creative but mostly factual
+            max_tokens=150,   # Keep answers short
         )
         
-        return response.strip()
+        # Clean up response
+        answer = response.strip()
+        
+        # Remove common prefixes the model might add
+        prefixes_to_remove = [
+            "Answer:", "The answer is:", "Based on the results,",
+            "According to the results,", "Here's the answer:"
+        ]
+        for prefix in prefixes_to_remove:
+            if answer.lower().startswith(prefix.lower()):
+                answer = answer[len(prefix):].strip()
+        
+        return answer
     
     def _format_results(
         self,
         plan: List[Dict[str, Any]],
         results: Dict[str, str]
     ) -> str:
-        """Format results with tool context for the prompt."""
+        """Format results clearly for the prompt."""
+        if not plan:
+            return "No tool execution needed."
+        
         lines = []
         for step in plan:
             step_id = step["id"]
             tool_name = step["tool"]
             result = results.get(step_id, "No result")
-            lines.append(f"{tool_name} result: {result}")
+            lines.append(f"- {tool_name}: {result}")
+        
         return "\n".join(lines)

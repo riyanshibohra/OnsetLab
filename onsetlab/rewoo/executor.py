@@ -15,12 +15,6 @@ class Executor:
     """
     
     def __init__(self, tools: List[BaseTool]):
-        """
-        Initialize executor.
-        
-        Args:
-            tools: Available tools.
-        """
         self.tools = {t.name: t for t in tools}
     
     def execute(self, plan: List[Dict[str, Any]]) -> Dict[str, str]:
@@ -31,7 +25,7 @@ class Executor:
             plan: List of plan steps from Planner.
             
         Returns:
-            Dict mapping step IDs to results (e.g., {"#E1": "12.675", "#E2": "..."}).
+            Dict mapping step IDs to results.
         """
         results = {}
         
@@ -51,7 +45,10 @@ class Executor:
             try:
                 tool = self.tools[tool_name]
                 result = tool.execute(**params)
-                results[step_id] = result
+                results[step_id] = str(result)
+            except TypeError as e:
+                # Handle missing/extra parameters gracefully
+                results[step_id] = f"Error: {str(e)}"
             except Exception as e:
                 results[step_id] = f"Error: {str(e)}"
         
@@ -64,44 +61,23 @@ class Executor:
     ) -> Dict[str, Any]:
         """
         Replace #E1, #E2, etc. with actual results.
-        
-        Args:
-            params: Parameters that may contain references.
-            results: Results from previous steps.
-            
-        Returns:
-            Parameters with references resolved.
         """
         resolved = {}
         
         for key, value in params.items():
             if isinstance(value, str):
-                # Check if it's a direct reference (e.g., param=#E1)
+                # Check if it's a direct reference (e.g., date=#E1)
                 if re.match(r'^#E\d+$', value):
                     resolved[key] = results.get(value, value)
                 else:
-                    # Replace references within strings
-                    for ref, result in results.items():
-                        value = value.replace(ref, str(result))
-                    resolved[key] = value
+                    # Replace references within strings/expressions
+                    new_value = value
+                    for ref in re.findall(r'#E\d+', value):
+                        if ref in results:
+                            # For expressions, substitute the value directly
+                            new_value = new_value.replace(ref, str(results[ref]))
+                    resolved[key] = new_value
             else:
                 resolved[key] = value
         
         return resolved
-    
-    def execute_parallel_safe(self, plan: List[Dict[str, Any]]) -> Dict[str, str]:
-        """
-        Execute steps, running independent steps in parallel.
-        
-        Note: This is a future optimization. Currently executes sequentially.
-        Independent steps (no shared dependencies) could run in parallel.
-        
-        Args:
-            plan: List of plan steps from Planner.
-            
-        Returns:
-            Dict mapping step IDs to results.
-        """
-        # TODO: Implement parallel execution for independent steps
-        # For now, just execute sequentially
-        return self.execute(plan)
