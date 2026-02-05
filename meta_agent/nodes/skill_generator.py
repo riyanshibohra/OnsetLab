@@ -10,7 +10,6 @@ Output: full_skill (for data gen) + condensed_rules (for system prompt)
 import json
 import os
 from typing import Tuple
-from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -64,7 +63,7 @@ For OBJECT type parameters, show the EXACT nested structure:
 
 User: "realistic user message"
 ```
-<tool_call>{{"tool": "tool_name", "parameters": {{"param1": "actual_value", ...}}}}</tool_call>
+<tool_call>{{"name": "tool_name", "arguments": {{"param1": "actual_value", ...}}}}</tool_call>
 ```
 
 (repeat for 5 different scenarios)
@@ -83,7 +82,7 @@ WHY: param should be an object, not a string
 
 ALWAYS respond with:
 ```
-<tool_call>{{"tool": "tool_name", "parameters": {{}}}}</tool_call>
+<tool_call>{{"name": "tool_name", "arguments": {{}}}}</tool_call>
 ```
 
 ## General Rules
@@ -129,11 +128,38 @@ Output the condensed system prompt directly, no explanation.
 
 
 class SkillGenerator:
-    """Generates skills for MCP servers."""
+    """Generates skills for MCP servers. Supports both OpenAI and Anthropic."""
     
-    def __init__(self, api_key: str = None, model: str = "gpt-4o"):
-        self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
-        self.model = model
+    def __init__(self, api_key: str = None, model: str = None):
+        """
+        Initialize skill generator.
+        
+        Args:
+            api_key: OpenAI or Anthropic API key
+            model: Model to use (auto-selected based on provider if None)
+        """
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+        
+        # Auto-detect API provider
+        if self.api_key and self.api_key.startswith("sk-ant-"):
+            self.api_provider = "anthropic"
+            self.model = model or "claude-sonnet-4-5"
+        else:
+            self.api_provider = "openai"
+            self.model = model or "gpt-4o"
+        
+        # Initialize client
+        self.client = None
+        self._init_client()
+    
+    def _init_client(self):
+        """Initialize API client based on provider."""
+        if self.api_provider == "openai":
+            from openai import OpenAI
+            self.client = OpenAI(api_key=self.api_key)
+        else:
+            import anthropic
+            self.client = anthropic.Anthropic(api_key=self.api_key)
     
     def generate(self, server_name: str, server_description: str, tools: list) -> Tuple[str, str]:
         """
@@ -166,33 +192,57 @@ class SkillGenerator:
             tools_json=tools_json
         )
         
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "You are a technical writer creating precise documentation for AI tool usage."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=8000
-        )
-        
-        return response.choices[0].message.content
+        if self.api_provider == "openai":
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a technical writer creating precise documentation for AI tool usage."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=8000
+            )
+            return response.choices[0].message.content
+        else:
+            # Anthropic
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=8000,
+                temperature=0.7,
+                system="You are a technical writer creating precise documentation for AI tool usage.",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return response.content[0].text
     
     def _generate_condensed_rules(self, full_skill: str) -> str:
         """Condense the full skill into minimal rules for system prompt."""
         prompt = CONDENSE_PROMPT.format(full_skill=full_skill)
         
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",  # Cheaper model for condensing
-            messages=[
-                {"role": "system", "content": "You create concise system prompts."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            max_tokens=500
-        )
-        
-        return response.choices[0].message.content
+        if self.api_provider == "openai":
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",  # Cheaper model for condensing
+                messages=[
+                    {"role": "system", "content": "You create concise system prompts."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=500
+            )
+            return response.choices[0].message.content
+        else:
+            # Anthropic - use haiku for cheaper condensing
+            response = self.client.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=500,
+                temperature=0.3,
+                system="You create concise system prompts.",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return response.content[0].text
 
 
 def generate_skill_from_registry(registry_path: str) -> Tuple[str, str]:
@@ -225,6 +275,7 @@ def generate_skill(state: dict) -> dict:
         - final_tools: list (user-approved tools)
         - problem_statement: str
         - identified_services: list[str]
+        - openai_api_key or anthropic_api_key: str (API key for skill generation)
         
     Adds to state:
         - full_skill: str (detailed skill for data generation)
@@ -233,6 +284,9 @@ def generate_skill(state: dict) -> dict:
     final_tools = state.get("final_tools", [])
     problem_statement = state.get("problem_statement", "")
     services = state.get("identified_services", [])
+    
+    # Get API key (prefer OpenAI if provided, otherwise use Anthropic)
+    api_key = state.get("openai_api_key") or state.get("anthropic_api_key")
     
     if not final_tools:
         print("⚠️ No tools found, skipping skill generation")
@@ -247,7 +301,7 @@ def generate_skill(state: dict) -> dict:
     
     print(f"\n🧠 Generating skill for {len(final_tools)} tools...")
     
-    generator = SkillGenerator()
+    generator = SkillGenerator(api_key=api_key)
     full_skill, condensed_rules = generator.generate(
         server_name=server_name,
         server_description=problem_statement,

@@ -135,17 +135,31 @@ def validate_format(
     """
     Validate format: real tool name, valid structure, fix param types.
     Returns (is_valid, example). Modifies ex in place (tool name normalization, param fixes).
+    
+    Supports ALL formats:
+    - Raw Qwen: {"tool": "name", "parameters": {...}}
+    - Raw Hermes: {"name": "tool_name", "arguments": {...}}
+    - Legacy: {"tool": "name", "params": {...}}
+    
+    Normalizes to: {"tool": "name", "parameters": {...}}
     """
     if has_placeholder(str(ex)):
         return False, ex
 
     # Edge cases without tool (clarification, refusal, casual) — only need response
-    if ex.get('tool') is None and ex.get('response'):
+    # Check both 'tool' and 'name' fields
+    tool_field = ex.get('tool') or ex.get('name')
+    if tool_field is None and ex.get('response'):
         return True, ex
 
-    tool = ex.get('tool')
+    # Get tool from either 'tool' or 'name' field (Hermes uses 'name')
+    tool = ex.get('tool') or ex.get('name')
     if not tool:
         return True, ex
+    
+    # Normalize: ensure 'tool' field exists
+    if 'name' in ex and 'tool' not in ex:
+        ex['tool'] = ex['name']
 
     actual_tool = None
     if tool in tool_names:
@@ -159,11 +173,17 @@ def validate_format(
     if not actual_tool:
         return False, ex
 
-    params = ex.get('parameters', ex.get('params', {}))
+    # Handle ALL parameter field names: "parameters", "arguments", "params"
+    params = ex.get('parameters') or ex.get('arguments') or ex.get('params', {})
     if params:
         fix_param_types(actual_tool, params, tools)
-        if 'params' in ex and 'parameters' not in ex:
-            ex['parameters'] = ex.pop('params', {})
+        # Normalize to "parameters" for consistency
+        ex['parameters'] = params
+        # Clean up alternative field names
+        if 'params' in ex:
+            del ex['params']
+        if 'arguments' in ex:
+            del ex['arguments']
 
     return True, ex
 
@@ -281,17 +301,24 @@ def validate_example(
     """
     Full validation: format + optional semantic check.
     Returns True if the example should be kept. Modifies ex in place (normalization, param fixes).
+    
+    Supports both Hermes (name/arguments) and Qwen (tool/parameters) formats.
     """
     valid, ex = validate_format(ex, tool_names, tool_map, tools)
     if not valid:
         return False
 
+    # Get tool name (after format validation, should be in 'tool' field)
+    tool_name = ex.get('tool') or ex.get('name')
+    
     # Semantic: only for tool-call examples
-    if semantic and ex.get('tool') and ex.get('query'):
+    if semantic and tool_name and ex.get('query'):
+        # Get parameters (after validation, should be in 'parameters' field)
+        params = ex.get('parameters') or ex.get('arguments') or ex.get('params', {})
         if not validate_semantic_match(
             ex.get("query", ""),
-            ex.get("tool", ""),
-            ex.get("parameters", ex.get("params", {})),
+            tool_name,
+            params,
             tools,
         ):
             return False

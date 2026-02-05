@@ -70,6 +70,7 @@ class MetaAgentState(TypedDict, total=False):
     # Input (required at start)
     problem_statement: str
     anthropic_api_key: str
+    openai_api_key: Optional[str]  # Optional - for skill generation if user prefers OpenAI
     
     # After analyze_problem
     identified_services: list[str]           # ["github", "slack", "google_calendar"]
@@ -121,6 +122,7 @@ def create_initial_state(
     problem_statement: str,
     selected_services: list[str],
     anthropic_api_key: str,
+    openai_api_key: str = None,
 ) -> MetaAgentState:
     """
     Create a properly initialized state for the meta-agent.
@@ -129,6 +131,7 @@ def create_initial_state(
         problem_statement: Description of what the agent should do
         selected_services: Services selected by user in UI (e.g., ["github", "slack"])
         anthropic_api_key: Anthropic API key for Claude LLM calls
+        openai_api_key: Optional OpenAI API key (used if provided, otherwise uses anthropic_api_key)
         
     Returns:
         Initialized MetaAgentState
@@ -137,6 +140,7 @@ def create_initial_state(
         # Input (from UI)
         "problem_statement": problem_statement,
         "anthropic_api_key": anthropic_api_key,
+        "openai_api_key": openai_api_key,
         "identified_services": selected_services,  # From UI selection
         
         # Discovery (NEW)

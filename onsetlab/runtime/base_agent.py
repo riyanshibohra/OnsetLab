@@ -12,6 +12,7 @@ import asyncio
 import re
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -36,13 +37,30 @@ API_PROVIDER = CONFIG.get("api_provider", "openai")
 MODEL = CONFIG.get("model", "gpt-4o")
 SKILL_SUMMARY = CONFIG.get("skill_summary", "A helpful assistant.")
 
+# Get current date/time for context
+now = datetime.now()
+current_datetime = now.strftime("%A, %B %d, %Y at %I:%M %p")
+current_date = now.strftime("%Y-%m-%d")
+current_time = now.strftime("%H:%M:%S")
+
 SYSTEM_PROMPT = f"""You are {AGENT_NAME}, a helpful assistant.
+
+CURRENT DATE & TIME:
+- Full: {current_datetime}
+- Date (YYYY-MM-DD): {current_date}
+- Time (24h): {current_time}
 
 {SKILL_SUMMARY}
 
 When the user asks you to do something, use the appropriate tool.
 For casual conversation (greetings, thanks, questions about yourself), respond naturally without tools.
 Always be helpful and concise. Give clean, readable responses without excessive formatting.
+
+For date/time-related requests:
+- Use the current date/time above as reference
+- "today" = {current_date}
+- "this week" = next 7 days from {current_date}
+- Calculate dates relative to {current_date}
 """
 
 

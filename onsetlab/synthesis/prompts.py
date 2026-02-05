@@ -3,12 +3,80 @@ System Prompt Templates for Tool Calling
 =========================================
 
 Supports multiple formats:
+- Hermes: Pre-trained function calling format (RECOMMENDED for small models)
 - ToolLLaMA: Pre-trained on ToolBench, uses specific format
 - NexusRaven: Uses Python function signatures  
 - Qwen: General purpose with custom format
 """
 
 import json
+
+def generate_prompt_for_hermes(
+    problem_statement: str,
+    tools: list,
+) -> str:
+    """
+    Generate system prompt for Hermes function calling format.
+    
+    Hermes format is optimized for reliable function calling on small models.
+    Uses: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+    
+    Args:
+        problem_statement: What the agent does
+        tools: List of tool dicts or ToolSchema objects
+    
+    Returns:
+        Hermes-compatible system prompt
+    """
+    # Build tool list with descriptions
+    tool_lines = []
+    for t in tools:
+        if isinstance(t, dict):
+            name = t.get('name', '')
+            desc = t.get('description', '')
+            params = t.get('parameters', {})
+        else:
+            name = getattr(t, 'name', '')
+            desc = getattr(t, 'description', '')
+            params = getattr(t, 'parameters', {})
+        
+        # List required params
+        required = []
+        for pname, pinfo in params.items():
+            if isinstance(pinfo, dict) and pinfo.get('required', False):
+                required.append(pname)
+        
+        if required:
+            tool_lines.append(f"- {name}: {desc} (required: {', '.join(required)})")
+        else:
+            tool_lines.append(f"- {name}: {desc}")
+    
+    tools_section = "\n".join(tool_lines)
+    
+    prompt = f"""You are an assistant that helps with: {problem_statement}
+
+Available tools:
+{tools_section}
+
+To use a tool, respond with:
+<tool_call>
+{{"name": "tool_name", "arguments": {{"param": "value"}}}}
+</tool_call>
+
+When NOT to use tools:
+- Greetings: Respond friendly without tool
+- Thanks: Acknowledge without tool
+- Questions about capabilities: Explain what you can do
+- Out of scope: Politely explain limitation
+
+Rules:
+- Use exact tool names from the list
+- Extract parameter values from user's message
+- If required info is missing, ask for it
+- Only use tools when user asks to DO something"""
+    
+    return prompt
+
 
 def generate_prompt_for_3b(
     problem_statement: str,
@@ -300,19 +368,21 @@ When no function is needed (greetings, thanks, questions about yourself), respon
 
 
 # Default for the SDK
-def get_default_prompt(problem_statement: str, tools: list, model_format: str = "toolllama") -> str:
+def get_default_prompt(problem_statement: str, tools: list, model_format: str = "hermes") -> str:
     """
     Get the default system prompt for OnsetLab.
     
     Args:
         problem_statement: What the agent does
         tools: List of tool schemas
-        model_format: One of "toolllama", "nexusraven", "qwen", "qwen_detailed"
+        model_format: One of "hermes" (default), "toolllama", "nexusraven", "qwen", "qwen_detailed"
     
     Returns:
         System prompt string
     """
-    if model_format == "toolllama":
+    if model_format == "hermes":
+        return generate_prompt_for_hermes(problem_statement, tools)
+    elif model_format == "toolllama":
         return generate_prompt_for_toolllama(problem_statement, tools)
     elif model_format == "nexusraven":
         return generate_prompt_for_nexusraven(problem_statement, tools)
@@ -324,6 +394,7 @@ def get_default_prompt(problem_statement: str, tools: list, model_format: str = 
 
 # Token estimates
 PROMPT_TOKEN_ESTIMATES = {
+    "hermes": 250,       # ~250 tokens (Hermes format)
     "3b_concise": 150,   # ~150 tokens
     "7b_detailed": 500,  # ~500 tokens
     "toolllama": 400,    # ~400 tokens (with JSON)

@@ -1,8 +1,7 @@
 """
-Meta-Agent LangGraph Definition (Registry-Based v3.2)
+Meta-Agent LangGraph Definition (Registry-Based v4.0)
 ======================================================
-Dynamic MCP server discovery from official registry.
-Falls back to curated registry for known services.
+Simple registry-based flow. No dynamic discovery - just load from curated JSON files.
 """
 
 from typing import Literal
@@ -10,11 +9,6 @@ from langgraph.graph import StateGraph, END
 
 from meta_agent.state import MetaAgentState, create_initial_state
 from meta_agent.nodes import (
-    # Discovery (NEW)
-    discover_servers,
-    verify_servers,
-    prepare_tools,
-    # Existing
     load_registry,
     filter_tools,
     process_feedback,
@@ -24,75 +18,45 @@ from meta_agent.nodes import (
 )
 
 
-def route_after_feedback(state: MetaAgentState) -> Literal["discover_servers", "filter_tools", "generate_skill"]:
+def route_after_feedback(state: MetaAgentState) -> Literal["load_registry", "filter_tools", "generate_skill"]:
     """
     Route based on user feedback action.
     
-    - "add_tools" → back to discover_servers (search for new services)
+    - "add_tools" → back to load_registry (reload with new services)
     - "remove_tools" → back to filter_tools (re-filter with removals)
-    - "approved" → continue to generate_skill (then guides, then notebook)
+    - "approved" → continue to generate_skill
     """
     action = state.get("feedback_action", "approved")
     
     if action == "add_tools":
-        return "discover_servers"
+        return "load_registry"
     elif action == "remove_tools":
         return "filter_tools"
     else:
         return "generate_skill"
 
 
-def route_after_verify(state: MetaAgentState) -> Literal["load_registry", "prepare_tools"]:
-    """
-    Route after verification:
-    - If we have verified servers → prepare_tools → filter_tools
-    - If verification failed → fallback to load_registry
-    """
-    verified = state.get("verified_servers", [])
-    
-    # Check if we have any successfully verified servers
-    has_verified = any(v.get("verification", {}).get("verified", False) for v in verified)
-    
-    if has_verified:
-        return "prepare_tools"
-    else:
-        # Fallback to curated registry
-        return "load_registry"
-
-
 def create_meta_agent_graph() -> StateGraph:
     """
-    Create the Meta-Agent LangGraph with dynamic MCP discovery.
+    Create the Meta-Agent LangGraph.
     
-    Graph Flow (v3.2 - Dynamic Discovery):
+    Graph Flow (v4.0 - Simple Registry):
     
         [UI: User selects services]
                     │
                     ▼
            ┌──────────────────┐
-           │ discover_servers │  (Search MCP Registry)
+           │  load_registry   │  (Load from JSON files)
            └────────┬─────────┘
                     │
                     ▼
            ┌──────────────────┐
-           │  verify_servers  │  (Verify NPM/GitHub/etc)
-           └────────┬─────────┘
-                    │
-           ┌────────┴─────────┐
-           │                  │
-     found │                  │not found
-           │                  │
-           ▼                  ▼
-    ┌──────────────┐   ┌──────────────┐
-    │ filter_tools │   │load_registry │  (Fallback to curated)
-    └──────┬───────┘   └──────┬───────┘
-           │                  │
+           │   filter_tools   │  (LLM selects relevant tools)
            └────────┬─────────┘
                     │
                     ▼
            ┌──────────────────┐
-           │ HITL: User reviews│
-           │  process_feedback│
+           │ process_feedback │  (HITL: user reviews)
            └────────┬─────────┘
                     │
            ┌────────┴─────────┐
@@ -120,59 +84,35 @@ def create_meta_agent_graph() -> StateGraph:
     Returns:
         Compiled StateGraph with HITL interrupt point
     """
-    # Build the graph
     workflow = StateGraph(MetaAgentState)
     
-    # Discovery nodes (NEW)
-    workflow.add_node("discover_servers", discover_servers)
-    workflow.add_node("verify_servers", verify_servers)
-    workflow.add_node("prepare_tools", prepare_tools)
-    
-    # Existing nodes
-    workflow.add_node("load_registry", load_registry)  # Fallback
+    # Nodes
+    workflow.add_node("load_registry", load_registry)
     workflow.add_node("filter_tools", filter_tools)
     workflow.add_node("process_feedback", process_feedback)
     workflow.add_node("generate_skill", generate_skill)
     workflow.add_node("generate_token_guides", generate_token_guides)
     workflow.add_node("generate_notebook", generate_notebook)
     
-    # Set entry point - start with discovery
-    workflow.set_entry_point("discover_servers")
+    # Entry point - directly load from registry
+    workflow.set_entry_point("load_registry")
     
-    # Discovery flow
-    workflow.add_edge("discover_servers", "verify_servers")
-    
-    # After verification, route based on results
-    workflow.add_conditional_edges(
-        "verify_servers",
-        route_after_verify,
-        {
-            "prepare_tools": "prepare_tools",  # Verified → prepare tools
-            "load_registry": "load_registry"   # Fallback if discovery failed
-        }
-    )
-    
-    # Prepare tools feeds into filter
-    workflow.add_edge("prepare_tools", "filter_tools")
-    
-    # Fallback registry also goes to filter_tools
+    # Simple linear flow
     workflow.add_edge("load_registry", "filter_tools")
-    
-    # Filter to feedback
     workflow.add_edge("filter_tools", "process_feedback")
     
-    # Conditional routing after feedback
+    # Feedback routing
     workflow.add_conditional_edges(
         "process_feedback",
         route_after_feedback,
         {
-            "discover_servers": "discover_servers",  # Loop back to discovery
+            "load_registry": "load_registry",
             "filter_tools": "filter_tools",
             "generate_skill": "generate_skill"
         }
     )
     
-    # Final pipeline: skill → guides → notebook
+    # Final pipeline
     workflow.add_edge("generate_skill", "generate_token_guides")
     workflow.add_edge("generate_token_guides", "generate_notebook")
     workflow.add_edge("generate_notebook", END)

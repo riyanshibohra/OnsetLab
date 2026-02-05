@@ -23,7 +23,16 @@ from pathlib import Path
 # Qwen: General purpose, needs more training data for tools
 #
 SUPPORTED_MODELS = {
-    # RECOMMENDED: Pre-trained on tool calling
+    # RECOMMENDED: Pre-trained on function calling (BEST for small size)
+    "phi-3.5-fc": {
+        "name": "Phi-3.5-mini-instruct-hermes-fc",
+        "unsloth_id": "unsloth/Phi-3.5-mini-instruct",  # Use base for Unsloth
+        "hf_id": "microsoft/Phi-3.5-mini-instruct",
+        "size": "3.8B",
+        "context_length": 128000,
+        "tool_format": "hermes",  # Uses Hermes function calling format
+        "pretrained_on_tools": True,  # Pre-trained on function calling!
+    },
     "toolllama-7b": {
         "name": "ToolLLaMA-2-7b-v2",
         "unsloth_id": "ToolBench/ToolLLaMA-2-7b-v2",
@@ -61,16 +70,16 @@ SUPPORTED_MODELS = {
     },
 }
 
-# Default to ToolLLaMA - pre-trained on tool calling
-DEFAULT_MODEL = "toolllama-7b"
+# Default to Phi-3.5-FC - best small model for function calling
+DEFAULT_MODEL = "phi-3.5-fc"
 MODEL_CONFIG = SUPPORTED_MODELS[DEFAULT_MODEL]
 
 
 @dataclass
 class TrainerConfig:
-    """Configuration for fine-tuning. Supports qwen2.5-3b and qwen2.5-7b."""
+    """Configuration for fine-tuning. Supports phi-3.5-fc (recommended), qwen2.5-3b and qwen2.5-7b."""
     
-    # Model settings: "qwen2.5-3b" (fast) or "qwen2.5-7b" (recommended)
+    # Model settings: "phi-3.5-fc" (RECOMMENDED), "qwen2.5-3b" (fast), or "qwen2.5-7b"
     base_model: str = DEFAULT_MODEL
     
     # LoRA settings (auto-adjusted based on dataset size if None)

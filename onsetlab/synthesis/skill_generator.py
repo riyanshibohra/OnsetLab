@@ -9,7 +9,6 @@ Part of the OnsetLab SDK - runs in Colab to create high-quality training data.
 import json
 import os
 from typing import Tuple
-from openai import OpenAI
 
 
 SKILL_GENERATION_PROMPT = """Analyze this MCP server and generate a comprehensive skill document.
@@ -60,7 +59,7 @@ For OBJECT type parameters, show the EXACT nested structure:
 
 User: "realistic user message"
 ```
-<tool_call>{{"tool": "tool_name", "parameters": {{"param1": "actual_value", ...}}}}</tool_call>
+<tool_call>{{"name": "tool_name", "arguments": {{"param1": "actual_value", ...}}}}</tool_call>
 ```
 
 (repeat for 5 different scenarios)
@@ -79,7 +78,7 @@ WHY: param should be an object, not a string
 
 ALWAYS respond with:
 ```
-<tool_call>{{"tool": "tool_name", "parameters": {{}}}}</tool_call>
+<tool_call>{{"name": "tool_name", "arguments": {{}}}}</tool_call>
 ```
 
 ## General Rules
@@ -128,6 +127,8 @@ class SkillGenerator:
     """
     Generates skills for MCP servers.
     
+    Supports both OpenAI and Anthropic APIs.
+    
     Usage:
         generator = SkillGenerator(api_key="sk-...")
         full_skill, condensed_rules = generator.generate(
@@ -137,16 +138,27 @@ class SkillGenerator:
         )
     """
     
-    def __init__(self, api_key: str = None, model: str = "gpt-4o"):
+    def __init__(self, api_key: str = None, model: str = None):
         """
         Initialize the skill generator.
         
         Args:
-            api_key: OpenAI API key (falls back to OPENAI_API_KEY env var)
-            model: Model to use for skill generation (default: gpt-4o)
+            api_key: OpenAI or Anthropic API key
+            model: Model to use (default: gpt-4o for OpenAI, claude-sonnet-4-5 for Anthropic)
         """
-        self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
-        self.model = model
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+        
+        # Auto-detect API provider
+        if self.api_key.startswith("sk-ant-"):
+            self.api_provider = "anthropic"
+            self.model = model or "claude-sonnet-4-5"
+        else:
+            self.api_provider = "openai"
+            self.model = model or "gpt-4o"
+        
+        # Initialize client
+        self.client = None
+        self._init_client()
     
     def generate(self, server_name: str, server_description: str, tools: list) -> Tuple[str, str]:
         """
@@ -173,6 +185,15 @@ class SkillGenerator:
         
         return full_skill, condensed_rules
     
+    def _init_client(self):
+        """Initialize API client based on provider."""
+        if self.api_provider == "openai":
+            from openai import OpenAI
+            self.client = OpenAI(api_key=self.api_key)
+        else:
+            import anthropic
+            self.client = anthropic.Anthropic(api_key=self.api_key)
+    
     def _generate_full_skill(self, server_name: str, server_description: str, tools_json: str) -> str:
         """Generate the full skill document."""
         prompt = SKILL_GENERATION_PROMPT.format(
@@ -181,30 +202,54 @@ class SkillGenerator:
             tools_json=tools_json
         )
         
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "You are a technical writer creating precise documentation for AI tool usage."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=8000
-        )
-        
-        return response.choices[0].message.content
+        if self.api_provider == "openai":
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a technical writer creating precise documentation for AI tool usage."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=8000
+            )
+            return response.choices[0].message.content
+        else:
+            # Anthropic
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=8000,
+                temperature=0.7,
+                system="You are a technical writer creating precise documentation for AI tool usage.",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return response.content[0].text
     
     def _generate_condensed_rules(self, full_skill: str) -> str:
         """Condense the full skill into minimal rules for system prompt."""
         prompt = CONDENSE_PROMPT.format(full_skill=full_skill)
         
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",  # Cheaper model for condensing
-            messages=[
-                {"role": "system", "content": "You create concise system prompts."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            max_tokens=500
-        )
-        
-        return response.choices[0].message.content
+        if self.api_provider == "openai":
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",  # Cheaper model for condensing
+                messages=[
+                    {"role": "system", "content": "You create concise system prompts."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=500
+            )
+            return response.choices[0].message.content
+        else:
+            # Anthropic - use haiku for cheaper condensing
+            response = self.client.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=500,
+                temperature=0.3,
+                system="You create concise system prompts.",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return response.content[0].text

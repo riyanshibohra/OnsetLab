@@ -42,9 +42,9 @@ class BuildConfig:
     # Set to path containing train.jsonl, validation.jsonl, test.jsonl, system_prompt.txt
     existing_data_dir: str = None  # e.g., "./agent_build" to resume from previous run
     
-    # Training settings (only Qwen2.5-3B supported)
+    # Training settings (phi-3.5-fc recommended for best function calling)
     # Set to None for auto-adjustment based on dataset size and tool count
-    base_model: str = "qwen2.5-3b"  # Qwen2.5-3B-Instruct
+    base_model: str = "phi-3.5-fc"  # Phi-3.5-mini-instruct-hermes-fc (3.8B, best for tools)
     lora_rank: int = None      # Auto: 8 (small) → 16 (medium) → 32 (large)
     lora_alpha: int = None     # Auto: matches rank (or 2x for small datasets)
     epochs: int = None         # Auto: 5 (small) → 3 (medium) → 2 (large)

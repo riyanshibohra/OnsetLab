@@ -46,9 +46,9 @@ class DataGenConfig:
     """
     
     # Per-tool limits (ENFORCED)
-    min_per_tool: int = 15            # Minimum - below this = underfitting
-    examples_per_tool: int = 50       # Suggested - 50/tool for robust learning
-    max_per_tool: int = 75            # Maximum - 3B can handle more with LoRA
+    min_per_tool: int = 10            # Minimum - below this = underfitting
+    examples_per_tool: int = 25       # Suggested - 25/tool is sweet spot for 3B
+    max_per_tool: int = 40            # Maximum - above this = overfitting risk
     
     # Distribution (must sum to 1.0)
     single_tool_ratio: float = 0.65   # 65% successful tool calls
@@ -75,10 +75,11 @@ class DataGenConfig:
     anthropic_model: str = "claude-sonnet-4-20250514"
     
     # Tool call format (matches model type)
+    # - "hermes": <tool_call>{"name": "...", "arguments": {...}}</tool_call>  ← RECOMMENDED
     # - "qwen": <tool_call>{"tool": "...", "parameters": {...}}</tool_call>
     # - "toolllama": Action: tool_name\nAction Input: {...}
     # - "nexusraven": Call: function_name(param="value")
-    tool_format: str = "toolllama"    # Default to ToolLLaMA format
+    tool_format: str = "hermes"    # Default to Hermes format (Phi-3.5-FC)
     
     def calculate_total(self, num_tools: int, level: str = "suggested") -> int:
         """
@@ -285,9 +286,13 @@ class DataGenerator:
                     try:
                         batch = future.result()
                         for ex in batch:
-                            tool = ex.get('tool')
+                            # Support both Hermes ("name") and Qwen ("tool") formats
+                            tool = ex.get('tool') or ex.get('name')
                             if tool in tool_counts:
                                 tool_counts[tool] += 1
+                                # Normalize to 'tool' field for consistency
+                                if 'name' in ex and 'tool' not in ex:
+                                    ex['tool'] = ex['name']
                                 examples.append(ex)
                     except Exception as e:
                         print(f"   ⚠ Batch failed: {e}")
@@ -527,17 +532,22 @@ class DataGenerator:
         messages.append({"role": "user", "content": example.get("query", "")})
         
         # Get tool format from config
-        tool_format = self.config.tool_format if self.config else "toolllama"
+        tool_format = self.config.tool_format if self.config else "hermes"
         
         # Assistant response
         if example_type in ("tool_call", "follow_up"):
             # Tool call + result + final response
             # follow_up is the same as tool_call but with context in the query
-            tool = example.get("tool")
-            params = example.get("parameters", example.get("params", {}))
+            # Support both Hermes ("name"/"arguments") and Qwen ("tool"/"parameters") formats
+            tool = example.get("tool") or example.get("name")
+            params = example.get("parameters") or example.get("arguments") or example.get("params", {})
             
             # Format tool call based on model type
-            if tool_format == "toolllama":
+            if tool_format == "hermes":
+                # Hermes format: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+                tool_json = json.dumps({"name": tool, "arguments": params})
+                tool_call_str = f"<tool_call>\n{tool_json}\n</tool_call>"
+            elif tool_format == "toolllama":
                 # ToolLLaMA format: Action: tool_name\nAction Input: {...}
                 params_json = json.dumps(params)
                 tool_call_str = f"Action: {tool}\nAction Input: {params_json}"

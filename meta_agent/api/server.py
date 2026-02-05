@@ -25,6 +25,7 @@ from meta_agent.nodes.discover_servers import (
     extract_server_config
 )
 from meta_agent.nodes.verify_server import verify_single_server
+from meta_agent.utils.gist_upload import upload_to_gist_async
 
 app = FastAPI(
     title="OnsetLab Meta-Agent API",
@@ -101,6 +102,8 @@ class GenerateRequest(BaseModel):
     selected_tools: dict[str, list[str]]  # service_id -> [tool_names]
     anthropic_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None  # For skill generation
+    upload_to_gist: bool = False  # Optional: upload notebook to GitHub Gist
+    github_token: Optional[str] = None  # Optional: GitHub token for Gist upload
 
 
 class GenerateResponse(BaseModel):
@@ -110,6 +113,8 @@ class GenerateResponse(BaseModel):
     full_skill: Optional[str] = None      # Generated skill (for preview)
     condensed_rules: Optional[str] = None  # System prompt (for preview)
     error: Optional[str] = None
+    gist_url: Optional[str] = None  # URL to GitHub Gist (if uploaded)
+    colab_url: Optional[str] = None  # Direct Colab link (if uploaded)
 
 
 # =============================================================================
@@ -382,7 +387,7 @@ def generate_notebook_standalone(
         "\n",
         "config = BuildConfig(\n",
         "    num_examples=None,\n",
-        "    base_model='qwen2.5-3b',\n",
+        "    base_model='phi-3.5-fc',  # Phi-3.5-mini-instruct-hermes-fc (3.8B, best for function calling)\n",
         "    epochs=None,\n",
         "    agent_name='my_agent',\n",
         "    output_dir='./agent_build',\n",
@@ -652,15 +657,74 @@ async def generate_notebook(request: GenerateRequest):
             tool_schemas=tool_schemas,
         )
         
+        # Upload to Gist if requested
+        gist_url = None
+        colab_url = None
+        if request.upload_to_gist:
+            try:
+                gist_result = await upload_to_gist_async(
+                    notebook_json=notebook_json,
+                    filename="onsetlab_agent_builder.ipynb",
+                    description=f"OnsetLab Agent: {request.problem_statement[:100]}",
+                    github_token=request.github_token,
+                    public=True,
+                )
+                gist_url = gist_result["gist_url"]
+                colab_url = gist_result["colab_url"]
+            except Exception as gist_error:
+                print(f"⚠️  Gist upload failed: {gist_error}")
+                # Don't fail the whole request if gist upload fails
+        
         return GenerateResponse(
             success=True,
             notebook_json=notebook_json,
+            gist_url=gist_url,
+            colab_url=colab_url,
         )
         
     except Exception as e:
         import traceback
         traceback.print_exc()
         return GenerateResponse(
+            success=False,
+            error=str(e),
+        )
+
+
+# =============================================================================
+# Gist Upload Endpoint
+# =============================================================================
+
+class UploadGistRequest(BaseModel):
+    notebook_json: str
+    github_token: Optional[str] = None
+
+
+class UploadGistResponse(BaseModel):
+    success: bool
+    gist_url: Optional[str] = None
+    colab_url: Optional[str] = None
+    error: Optional[str] = None
+
+
+@app.post("/api/upload-gist", response_model=UploadGistResponse)
+async def upload_gist(request: UploadGistRequest):
+    """Upload a notebook to GitHub Gist and return Colab URL."""
+    try:
+        gist_result = await upload_to_gist_async(
+            notebook_json=request.notebook_json,
+            filename="onsetlab_agent_builder.ipynb",
+            description="OnsetLab Agent Builder Notebook",
+            github_token=request.github_token,
+            public=True,
+        )
+        return UploadGistResponse(
+            success=True,
+            gist_url=gist_result["gist_url"],
+            colab_url=gist_result["colab_url"],
+        )
+    except Exception as e:
+        return UploadGistResponse(
             success=False,
             error=str(e),
         )

@@ -116,19 +116,13 @@ def filter_tools(state: MetaAgentState) -> dict:
             "tools_to_add": []  # Clear for next iteration
         }
     
-    # INITIAL MODE: LLM filters from scratch
+    # INITIAL MODE: LLM filters from scratch based on problem relevance
     print("\n🔍 Filtering tools for relevance...")
     print(f"   📝 Problem: {problem_statement[:100]}...")
-    print(f"   📦 Total tools before filtering: {len(source_tools)}")
+    print(f"   📦 Total tools available: {len(source_tools)}")
     
-    if len(source_tools) <= 20:
-        print(f"   ✅ Already within limit ({len(source_tools)} tools), skipping filter")
-        return {
-            "filtered_tools": source_tools,
-            "filtered_tool_schemas": source_tools,  # Legacy
-            "filtered_mcp_servers": mcp_servers,
-            "filtered_api_servers": api_servers,
-        }
+    # Always run LLM filtering to select only relevant tools
+    # Even with few tools, we want to select only those matching the problem
     
     # Format tools for LLM
     tools_list = []

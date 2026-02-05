@@ -185,16 +185,21 @@ class Validator:
         return True  # Unknown types pass
     
     def _validate_tool_call(self, tool_call: dict, line_num: int) -> list[ValidationError]:
-        """Validate a single tool call against schemas."""
+        """Validate a single tool call against schemas.
+        
+        Supports both formats:
+        - Hermes: {"name": "tool_name", "arguments": {...}}
+        - Qwen/legacy: {"tool": "tool_name", "parameters": {...}}
+        """
         errors = []
         
-        # Check tool name exists
-        tool_name = tool_call.get("tool")
+        # Check tool name exists (support both "name" and "tool" fields)
+        tool_name = tool_call.get("name") or tool_call.get("tool")
         if not tool_name:
             errors.append(ValidationError(
                 line_number=line_num,
                 error_type="missing_tool_name",
-                message="Tool call missing 'tool' field"
+                message="Tool call missing 'name' or 'tool' field"
             ))
             return errors
         
@@ -217,8 +222,8 @@ class Validator:
         properties = input_schema.get("properties", {})
         required = input_schema.get("required", [])
         
-        # Get parameters from tool call
-        params = tool_call.get("parameters", {})
+        # Get parameters from tool call (support both "arguments" and "parameters")
+        params = tool_call.get("arguments") or tool_call.get("parameters", {})
         
         # Check required parameters
         for req_param in required:
