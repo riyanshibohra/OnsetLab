@@ -1,60 +1,62 @@
 """REWOO Solver - synthesizes final answer from results."""
 
+import re
 from typing import List, Dict, Any, Optional
 
 from ..model.base import BaseModel
 
 
-SOLVER_PROMPT = '''Answer the user's question using ONLY the execution results below.
+SOLVER_PROMPT = '''Answer the question using ONLY the results below.
 
 Question: {task}
-
 Results:
 {results_summary}
 
-Rules:
-- Be concise and direct (1-2 sentences max)
-- Use the actual values from results
-- Do NOT add information not in the results
-- Do NOT explain how you got the answer
+RULES:
+- Give ONLY the answer, nothing else
+- 1-2 sentences maximum
+- NO explanations, NO notes, NO parenthetical comments
+- Use the exact values from results
 
 Answer:'''
 
 
-SOLVER_WITH_CONTEXT_PROMPT = '''Answer the user's question using the conversation context and execution results.
+SOLVER_WITH_CONTEXT_PROMPT = '''Answer the question using context and results.
 
 Context:
 {context}
 
 Question: {task}
-
 Results:
 {results_summary}
 
-Rules:
-- Be concise and direct (1-2 sentences max)
-- Use values from results and context
-- Do NOT add information not provided
-- Do NOT explain your reasoning
+RULES:
+- Give ONLY the answer, nothing else
+- 1-2 sentences maximum
+- NO explanations, NO notes, NO parenthetical comments
 
 Answer:'''
 
 
+CASUAL_PROMPT = '''Respond briefly to this casual message.
+
+Context:
+{context}
+
+Message: {task}
+
+RULES:
+- Be friendly and brief (1 sentence)
+- NO tool suggestions
+- NO explanations
+
+Response:'''
+
+
 class Solver:
-    """
-    REWOO Solver - synthesizes final answer from execution results.
-    
-    Takes the original task and all tool results, generates a
-    concise natural language answer for the user.
-    """
+    """REWOO Solver - synthesizes final answer from execution results."""
     
     def __init__(self, model: BaseModel):
-        """
-        Initialize solver.
-        
-        Args:
-            model: The SLM backend.
-        """
         self.model = model
     
     def solve(
@@ -64,18 +66,12 @@ class Solver:
         results: Dict[str, str],
         context: Optional[str] = None
     ) -> str:
-        """
-        Synthesize final answer from results.
+        """Synthesize final answer from results."""
         
-        Args:
-            task: Original task.
-            plan: Execution plan (for reference).
-            results: Results from executor.
-            context: Optional conversation context.
-            
-        Returns:
-            Concise natural language answer.
-        """
+        # If no plan and no results, handle as casual/direct
+        if not plan and not results:
+            return self._handle_casual(task, context)
+        
         results_summary = self._format_results(plan, results)
         
         if context:
@@ -92,32 +88,63 @@ class Solver:
         
         response = self.model.generate(
             prompt,
-            temperature=0.3,  # Slightly creative but mostly factual
-            max_tokens=150,   # Keep answers short
+            temperature=0.3,
+            max_tokens=100,
+            stop_sequences=["\n\n", "(Note", "(note", "Note:"],
         )
         
-        # Clean up response
+        return self._clean_response(response)
+    
+    def _handle_casual(self, task: str, context: Optional[str] = None) -> str:
+        """Handle casual messages without tool results."""
+        prompt = CASUAL_PROMPT.format(
+            context=context or "No previous context.",
+            task=task
+        )
+        
+        response = self.model.generate(
+            prompt,
+            temperature=0.7,
+            max_tokens=50,
+            stop_sequences=["\n\n", "(Note", "(note"],
+        )
+        
+        return self._clean_response(response)
+    
+    def _clean_response(self, response: str) -> str:
+        """Clean up model response."""
         answer = response.strip()
         
-        # Remove common prefixes the model might add
-        prefixes_to_remove = [
+        # Remove common prefixes
+        prefixes = [
             "Answer:", "The answer is:", "Based on the results,",
-            "According to the results,", "Here's the answer:"
+            "According to the results,", "Here's the answer:",
+            "Response:", "The result is:"
         ]
-        for prefix in prefixes_to_remove:
+        for prefix in prefixes:
             if answer.lower().startswith(prefix.lower()):
                 answer = answer[len(prefix):].strip()
         
-        return answer
+        # Remove parenthetical notes/explanations at the end
+        # Pattern: (Note: ...) or (This is ...) etc.
+        answer = re.sub(r'\s*\([Nn]ote:.*?\)\s*$', '', answer)
+        answer = re.sub(r'\s*\([Tt]his.*?\)\s*$', '', answer)
+        answer = re.sub(r'\s*\([Ii] used.*?\)\s*$', '', answer)
+        
+        # Remove trailing incomplete sentences starting with (
+        if '(' in answer and answer.count('(') > answer.count(')'):
+            answer = answer[:answer.rfind('(')].strip()
+        
+        return answer.strip()
     
     def _format_results(
         self,
         plan: List[Dict[str, Any]],
         results: Dict[str, str]
     ) -> str:
-        """Format results clearly for the prompt."""
+        """Format results for prompt."""
         if not plan:
-            return "No tool execution needed."
+            return "No results available."
         
         lines = []
         for step in plan:

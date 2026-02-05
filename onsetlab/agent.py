@@ -2,6 +2,7 @@
 OnsetLab Agent - REWOO-based agent with tool calling.
 """
 
+import re
 from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,6 +16,18 @@ from .rewoo.executor import Executor
 from .rewoo.verifier import Verifier
 from .rewoo.solver import Solver
 from .mcp.server import MCPServer
+
+
+# Patterns for casual messages that don't need tools
+CASUAL_PATTERNS = [
+    r'^(hi|hey|hello|yo|sup|hiya|howdy)[\s!.?]*$',
+    r'^(bye|goodbye|see ya|later|cya)[\s!.?]*$',
+    r'^(thanks|thank you|thx|ty)[\s!.?]*$',
+    r'^(ok|okay|sure|got it|understood)[\s!.?]*$',
+    r'^(yes|no|yeah|nope|yep)[\s!.?]*$',
+    r'^(good|great|nice|cool|awesome)[\s!.?]*$',
+    r"^(how are you|how's it going|what's up)[\s!.?]*$",
+]
 
 
 @dataclass
@@ -73,6 +86,14 @@ class Agent:
         """Collect all tools."""
         return list(self._tools)
     
+    def _is_casual(self, query: str) -> bool:
+        """Check if query is a casual message that doesn't need tools."""
+        query_lower = query.lower().strip()
+        for pattern in CASUAL_PATTERNS:
+            if re.match(pattern, query_lower, re.IGNORECASE):
+                return True
+        return False
+    
     def _get_system_context(self) -> str:
         """Get system context with current datetime."""
         now = datetime.now()
@@ -117,6 +138,25 @@ class Agent:
         
         if self._debug:
             print(f"\n[DEBUG] Context:\n{context}\n")
+        
+        # Handle casual messages directly (skip planner)
+        if self._is_casual(query):
+            if self._debug:
+                print(f"[DEBUG] Detected casual message, skipping planner")
+            answer = self._solver.solve(query, [], {}, context)
+            slm_calls = 1
+            
+            if self._memory is not None:
+                self._memory.add_user_message(query)
+                self._memory.add_assistant_message(answer)
+            
+            return AgentResult(
+                answer=answer,
+                plan=[],
+                results={},
+                verified=True,
+                slm_calls=slm_calls
+            )
         
         # Plan (1 SLM call)
         plan = self._planner.plan(query, context)

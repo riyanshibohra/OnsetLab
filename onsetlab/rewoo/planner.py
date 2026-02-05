@@ -7,30 +7,14 @@ from ..model.base import BaseModel
 from ..tools.base import BaseTool
 
 
-# Few-shot examples showing EXACT format expected
-PLANNER_PROMPT = '''You are a planner. Write tool calls in EXACT format shown below.
-
-AVAILABLE TOOLS:
+# Simple planner prompt
+PLANNER_PROMPT = '''TOOLS:
 {tools_description}
 
-EXAMPLE FORMAT (follow exactly):
-Task: Do X, then use result for Y
-#E1 = ToolA(param="value")
-#E2 = ToolB(input=#E1)
-
-Task: Calculate something complex
-#E1 = ToolA(x="first")
-#E2 = ToolA(x="second") 
-#E3 = ToolB(expr="#E1 + #E2")
-
-RULES:
-- Output ONLY tool calls, nothing else
-- Use #E1, #E2 to chain results (NO quotes around #E1)
-- One tool per line
-- ALL params in format: param="value" or param=#E1
+Write ONE tool call to solve the task. Use EXACT tool names above.
 {context_section}
 Task: {task}
-'''
+Answer: #E1 ='''
 
 
 class Planner:
@@ -57,15 +41,18 @@ class Planner:
         
         response = self.model.generate(
             prompt,
-            temperature=0.1,
-            max_tokens=256,
-            stop_sequences=["\n\n", "Note:", "Explanation:", "---"],
+            temperature=0.0,
+            max_tokens=100,
+            stop_sequences=["\n\n", "\n#E2", "Note:", "Explanation:", "---", "Task:"],
         )
         
-        if self.debug:
-            print(f"\n[DEBUG] Planner raw response:\n{response}\n")
+        # Prepend "#E1 =" since prompt ends with it
+        full_response = "#E1 =" + response
         
-        steps = self._parse_plan(response)
+        if self.debug:
+            print(f"\n[DEBUG] Planner raw response:\n{full_response}\n")
+        
+        steps = self._parse_plan(full_response)
         steps = self._deduplicate_steps(steps)
         steps = self._validate_steps(steps)
         
@@ -107,6 +94,9 @@ class Planner:
         # Clean up common model mistakes
         response = response.replace('expression*=', 'expression=')
         response = response.replace('*=', '=')
+        # Handle colon syntax: param: "value" -> param="value"
+        response = re.sub(r'(\w+):\s*"', r'\1="', response)
+        response = re.sub(r'(\w+):\s*(\d)', r'\1=\2', response)
         
         lines = response.strip().split('\n')
         
@@ -118,6 +108,9 @@ class Planner:
             # Skip lines that don't look like tool calls
             if not ('(' in line and ')' in line):
                 continue
+            
+            # Remove numbered list prefixes: "1. ", "2. ", etc.
+            line = re.sub(r'^\d+\.\s*', '', line)
             
             # Handle: #E1 = #E1 = ToolName(...) by removing duplicate
             line = re.sub(r'^(#E\d+)\s*=\s*\1\s*=', r'\1 =', line)
@@ -144,7 +137,6 @@ class Planner:
                 
                 step_num = step_counter
             
-            # Skip if not a known tool (but allow parsing to continue for validation later)
             params = self._parse_params(params_str)
             depends_on = re.findall(r'#E\d+', params_str)
             
@@ -163,10 +155,7 @@ class Planner:
         """Parse parameter string into dict."""
         params = {}
         
-        # Split by comma, but be careful with nested quotes
-        # Handle: param="value", param2=#E1, param3="complex #E1 + 5"
-        
-        # First, extract quoted values
+        # First, extract quoted values: param="value"
         quoted_pattern = r'(\w+)\s*=\s*"([^"]*)"'
         for match in re.finditer(quoted_pattern, params_str):
             params[match.group(1)] = match.group(2)
@@ -174,21 +163,26 @@ class Planner:
         # Remove matched quoted params
         remaining = re.sub(quoted_pattern, '', params_str)
         
-        # Then extract unquoted values (#E refs, numbers)
-        unquoted_pattern = r'(\w+)\s*=\s*(#E\d+|[\d.\-]+)'
+        # Extract unquoted values: param=#E1 or param=123 or param=word
+        unquoted_pattern = r'(\w+)\s*=\s*([^,\s\)]+)'
         for match in re.finditer(unquoted_pattern, remaining):
             key = match.group(1)
             if key in params:
                 continue
-            value = match.group(2)
+            value = match.group(2).strip()
             
+            # Handle #E references
             if value.startswith('#E'):
                 params[key] = value
-            else:
+            # Handle numbers
+            elif re.match(r'^[\d.\-]+$', value):
                 try:
                     params[key] = float(value) if '.' in value else int(value)
                 except ValueError:
                     params[key] = value
+            # Handle plain string values (like operation=difference)
+            else:
+                params[key] = value
         
         return params
     
@@ -209,6 +203,28 @@ class Planner:
         
         return unique
     
+    def _normalize_tool_name(self, name: str) -> Optional[str]:
+        """Try to match tool name to actual tool, handling model mistakes."""
+        # Exact match
+        if name in self.tools:
+            return name
+        
+        # Case-insensitive match
+        name_lower = name.lower()
+        for tool_name in self.tools:
+            if tool_name.lower() == name_lower:
+                return tool_name
+        
+        # Partial/substring match (e.g., "Calc" -> "Calculator", "ToolCalculator" -> "Calculator")
+        # Works for any tool name without hardcoding
+        for tool_name in self.tools:
+            tool_lower = tool_name.lower()
+            # Check if tool name is contained in the given name or vice versa
+            if tool_lower in name_lower or name_lower in tool_lower:
+                return tool_name
+        
+        return None
+    
     def _validate_steps(self, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Validate steps - check tool exists and has required params."""
         valid = []
@@ -216,18 +232,23 @@ class Planner:
         for step in steps:
             tool_name = step["tool"]
             
-            if tool_name not in self.tools:
+            # Try to normalize the tool name
+            normalized = self._normalize_tool_name(tool_name)
+            if not normalized:
                 if self.debug:
                     print(f"[DEBUG] Unknown tool: {tool_name}")
                 continue
             
-            tool = self.tools[tool_name]
+            # Update step with normalized name
+            step["tool"] = normalized
+            
+            tool = self.tools[normalized]
             required = tool.parameters.get("required", [])
             
             missing = [p for p in required if p not in step["params"]]
             if missing:
                 if self.debug:
-                    print(f"[DEBUG] Missing params for {tool_name}: {missing}")
+                    print(f"[DEBUG] Missing params for {normalized}: {missing}")
                 continue
             
             valid.append(step)
