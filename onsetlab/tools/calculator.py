@@ -15,7 +15,7 @@ class Calculator(BaseTool):
     """
     
     name = "Calculator"
-    description = "Evaluate mathematical expressions. Supports +, -, *, /, %, ^, sqrt, sin, cos, tan, log, abs, round, floor, ceil."
+    description = "Evaluate mathematical expressions. Supports +, -, *, /, ^, sqrt, sin, cos, tan, log, abs, round, floor, ceil, max, min, sum."
     
     # Safe math functions available in expressions
     SAFE_FUNCTIONS = {
@@ -30,6 +30,9 @@ class Calculator(BaseTool):
         'floor': math.floor,
         'ceil': math.ceil,
         'pow': pow,
+        'max': max,
+        'min': min,
+        'sum': sum,
         'pi': math.pi,
         'e': math.e,
     }
@@ -99,6 +102,6 @@ class Calculator(BaseTool):
     
     def _is_safe_expression(self, expr: str) -> bool:
         """Check if expression only contains safe characters."""
-        # Allow: digits, operators, parentheses, spaces, dots, function names
-        allowed_pattern = r'^[\d\s\+\-\*\/\.\(\)\,a-z_]+$'
+        # Allow: digits, operators, parentheses, brackets, spaces, dots, function names
+        allowed_pattern = r'^[\d\s\+\-\*\/\.\(\)\[\]\,a-z_]+$'
         return bool(re.match(allowed_pattern, expr, re.IGNORECASE))
