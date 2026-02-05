@@ -106,6 +106,7 @@ class OllamaModel(BaseModel):
         stop_sequences: Optional[List[str]] = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        json_mode: bool = False,
     ) -> str:
         """Call Ollama generate API."""
         import requests
@@ -122,6 +123,9 @@ class OllamaModel(BaseModel):
         
         if stop_sequences:
             payload["options"]["stop"] = stop_sequences
+        
+        if json_mode:
+            payload["format"] = "json"
         
         try:
             response = requests.post(
