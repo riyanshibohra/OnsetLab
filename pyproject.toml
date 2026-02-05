@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "onsetlab"
 version = "0.1.0"
-description = "Build AI agents with fine-tuned SLMs and MCP tools"
+description = "Reliable SLM agents with REWOO strategy. Plan once, execute fast, verify always."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
@@ -15,11 +15,13 @@ authors = [
 keywords = [
     "ai",
     "agents",
-    "llm",
-    "fine-tuning",
+    "slm",
+    "small-language-models",
+    "tool-calling",
+    "rewoo",
     "mcp",
     "model-context-protocol",
-    "slm",
+    "ollama",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -33,31 +35,12 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
-# Core dependencies (always needed)
+# Core dependencies
 dependencies = [
-    "openai>=1.0.0",
-    "httpx>=0.25.0",
+    "requests>=2.28.0",
 ]
 
 [project.optional-dependencies]
-# For training (only needed on Colab/GPU environment)
-training = [
-    "torch>=2.0.0",
-    "transformers>=4.36.0",
-    "datasets>=2.14.0",
-    "accelerate>=0.25.0",
-    "peft>=0.7.0",
-    "trl>=0.7.0",
-    "bitsandbytes>=0.41.0",
-    # unsloth installed separately: pip install unsloth
-]
-
-# For running agents locally
-runtime = [
-    "torch>=2.0.0",
-    "transformers>=4.36.0",
-]
-
 # For development
 dev = [
     "pytest>=7.0.0",
@@ -65,23 +48,18 @@ dev = [
     "ruff>=0.1.0",
 ]
 
-# Everything
-all = [
-    "onsetlab[training,runtime,dev]",
-]
-
 [project.urls]
-Homepage = "https://github.com/yourusername/onsetlab"
-Documentation = "https://github.com/yourusername/onsetlab#readme"
-Repository = "https://github.com/yourusername/onsetlab"
-Issues = "https://github.com/yourusername/onsetlab/issues"
+Homepage = "https://github.com/riyanshibohra/onsetlab"
+Documentation = "https://github.com/riyanshibohra/onsetlab#readme"
+Repository = "https://github.com/riyanshibohra/onsetlab"
+Issues = "https://github.com/riyanshibohra/onsetlab/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["onsetlab*"]
 
 [tool.setuptools.package-data]
-onsetlab = ["py.typed"]
+onsetlab = ["py.typed", "mcp/registry/*.json"]
 
 # Ruff configuration (linter)
 [tool.ruff]
@@ -90,7 +68,7 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
-ignore = ["E501"]  # Line too long (handled by formatter)
+ignore = ["E501"]
 
 # Black configuration (formatter)
 [tool.black]
@@ -103,6 +81,3 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
-filterwarnings = [
-    "ignore::DeprecationWarning",
-]
