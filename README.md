@@ -4,7 +4,11 @@ Make your local SLMs do actual work.
 
 ## What
 
-Agent framework that connects small language models (via Ollama) to MCP tools. REWOO architecture with ReAct fallback makes 3-4B models actually usable for tool calling.
+Agent framework for small language models (3B parameters) that achieves GPT-4 level tool use on your laptop. Uses REWOO architecture (plan → execute → verify) with ReAct fallback for robustness.
+
+- **No API keys** - runs entirely on Ollama
+- **No fine-tuning** - works out of the box with any Ollama model
+- **MCP support** - connect to any MCP-compatible server
 
 ## Install
 
@@ -14,40 +18,100 @@ pip install onsetlab
 
 Requires [Ollama](https://ollama.ai) running locally.
 
-## Usage
+## Quick Start
+
+```python
+from onsetlab import Agent
+
+agent = Agent("phi3.5")
+result = agent.run("What time is it in Tokyo?")
+print(result.answer)
+```
+
+## Adding Tools
+
+Choose only the tools you need:
+
+```python
+from onsetlab import Agent
+from onsetlab.tools import Calculator, DateTime, UnitConverter, TextProcessor, RandomGenerator
+
+agent = Agent(
+    model="phi3.5",
+    tools=[Calculator(), DateTime()]
+)
+
+result = agent.run("What's 15% tip on $84.50?")
+print(result.answer)  # "The 15% tip on $84.50 is $12.68"
+```
+
+**Available built-in tools:**
+- `Calculator` - math operations
+- `DateTime` - current time, timezones, date math
+- `UnitConverter` - convert between units
+- `TextProcessor` - word count, search, transform text
+- `RandomGenerator` - random numbers, strings, choices
+
+## MCP Servers
+
+Connect to external services via Model Context Protocol:
 
 ```python
 from onsetlab import Agent, MCPServer
 
 agent = Agent("phi3.5")
-agent.add_mcp_server(MCPServer.from_registry("filesystem", path="."))
 
-result = agent.run("List all Python files in this directory")
+# Add filesystem access
+agent.add_mcp_server(MCPServer.from_registry("filesystem", path="/my/project"))
+
+# Add GitHub integration
+agent.add_mcp_server(MCPServer.from_registry("github", token="ghp_..."))
+
+result = agent.run("List all Python files in the project")
 print(result.answer)
 ```
 
-## MCP Servers
+**Registry servers:** `filesystem`, `github`, `slack`, `notion`, `google_calendar`, `tavily`
 
-Built-in registry: `filesystem`, `github`, `slack`, `notion`, `google_calendar`, `tavily`
+Or configure any MCP server manually:
 
 ```python
-# With authentication
-agent.add_mcp_server(MCPServer.from_registry("github", token="ghp_..."))
+server = MCPServer(
+    name="my-server",
+    command="npx",
+    args=["-y", "@some/mcp-server"],
+    env={"API_KEY": "..."}
+)
+agent.add_mcp_server(server)
 ```
 
 ## Architecture
 
 ```
-User Query → Planner (1 SLM call) → Executor → Verifier → Solver (1 SLM call)
-                                        ↓
-                               ReAct fallback if needed
+Task → Planner → Executor → Verifier → Solver → Answer
+         ↓          ↓
+      REWOO     (ReAct fallback if needed)
 ```
 
-## Limitations
+1. **Planner** - creates step-by-step execution plan
+2. **Verifier** - validates plan before execution
+3. **Executor** - runs tools with dependency resolution
+4. **Solver** - synthesizes final answer from results
+5. **ReAct fallback** - recovers from planning failures
 
-- Works best with <20 tools (SLMs struggle with large tool sets)
-- Tested with phi3.5, llama3.2:3b
-- MCP servers must be installed separately
+## Options
+
+```python
+agent = Agent(
+    model="phi3.5",           # any Ollama model
+    tools=[...],              # built-in tools
+    mcp_servers=[...],        # MCP servers
+    memory=True,              # conversation memory
+    verify=True,              # pre-execution verification
+    react_fallback=True,      # fallback on REWOO failure
+    debug=False               # verbose logging
+)
+```
 
 ## License
 
