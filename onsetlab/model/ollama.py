@@ -14,6 +14,38 @@ class OllamaModel(BaseModel):
     Requires Ollama to be installed and running.
     """
     
+    # Recommended models for tool-calling (tested)
+    RECOMMENDED = {
+        "phi3.5": "Microsoft Phi-3.5 (3.8B) - Best balance of speed/quality",
+        "qwen2.5:3b": "Alibaba Qwen 2.5 (3B) - Fast, good instruction following",
+        "llama3.2:3b": "Meta Llama 3.2 (3B) - Good general purpose",
+        "mistral:7b": "Mistral 7B - Higher quality, slower",
+    }
+    
+    @classmethod
+    def list_available(cls) -> list:
+        """List models available in your local Ollama."""
+        import subprocess
+        try:
+            result = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')[1:]  # Skip header
+                return [line.split()[0] for line in lines if line]
+        except:
+            pass
+        return []
+    
+    @classmethod  
+    def print_recommended(cls):
+        """Print recommended models for tool-calling."""
+        print("\nRecommended models for OnsetLab:")
+        print("-" * 50)
+        for name, desc in cls.RECOMMENDED.items():
+            available = cls.list_available()
+            status = "✓ installed" if name in available or name.split(":")[0] in [m.split(":")[0] for m in available] else "  (run: ollama pull " + name + ")"
+            print(f"  {name}: {desc}")
+            print(f"    {status}")
+    
     def __init__(self, model: str = "phi3.5"):
         """
         Initialize Ollama model.

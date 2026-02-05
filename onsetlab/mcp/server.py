@@ -121,20 +121,37 @@ class MCPServer:
         List available MCP services from registry.
         
         Returns:
-            List of service info dicts with 'id', 'name', 'description'.
+            List of service info dicts.
         """
         registry_dir = Path(__file__).parent / "registry"
         services = []
         
         for config_file in registry_dir.glob("*.json"):
+            if config_file.stem == "__init__":
+                continue
             config = json.loads(config_file.read_text())
+            auth = config.get("auth", {})
             services.append({
                 "id": config_file.stem,
                 "name": config.get("name", config_file.stem),
                 "description": config.get("description", ""),
+                "env_var": auth.get("env_var"),
+                "setup_url": auth.get("setup_url"),
             })
         
         return sorted(services, key=lambda x: x["name"])
+    
+    @classmethod
+    def print_available_services(cls) -> None:
+        """Print available MCP services in a nice format."""
+        services = cls.list_available_services()
+        print("\nAvailable MCP Servers:")
+        print("-" * 50)
+        for s in services:
+            env = f"  Requires: {s['env_var']}" if s['env_var'] else "  (no auth required)"
+            print(f"\n  {s['id']}: {s['name']}")
+            print(f"    {s['description']}")
+            print(env)
     
     def connect(self) -> None:
         """Connect to the MCP server."""

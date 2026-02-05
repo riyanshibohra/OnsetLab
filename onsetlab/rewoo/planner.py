@@ -211,7 +211,8 @@ class Planner:
             line = re.sub(r'^(#E\d+)\s*=\s*#E\d+\s*=', r'\1 =', line)
             
             # Try pattern with #E prefix: #E1 = ToolName(params) or #E1 = ToolName()
-            match = re.match(r'#E(\d+)\s*=\s*(\w+)\s*\((.*)\)', line)
+            # Use [\w-]+ to match tool names with hyphens (e.g., API-get-self)
+            match = re.match(r'#E(\d+)\s*=\s*([\w-]+)\s*\((.*)\)', line)
             
             if match:
                 step_num = int(match.group(1))
@@ -219,7 +220,7 @@ class Planner:
                 params_str = match.group(3)
             else:
                 # Try pattern without #E prefix: ToolName(params) or ToolName()
-                match = re.match(r'(\w+)\s*\((.*)\)', line)
+                match = re.match(r'([\w-]+)\s*\((.*)\)', line)
                 if not match:
                     continue
                 
