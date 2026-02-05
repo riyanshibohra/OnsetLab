@@ -9,7 +9,7 @@ dist/
 build/
 eggs/
 *.egg
-
+specs/
 # Virtual environments
 venv/
 .venv/
@@ -40,3 +40,4 @@ agent_build/
 
 # OS
 Thumbs.db
+
