@@ -13,10 +13,10 @@ Results:
 {results_summary}
 
 RULES:
-- Give ONLY the answer, nothing else
-- 1-2 sentences maximum
-- NO explanations, NO notes, NO parenthetical comments
-- Use the exact values from results
+- If results show success, give the answer (1-2 sentences)
+- If results show ERROR, say "I couldn't complete this task" and briefly explain why
+- Use exact values from results
+- Be honest - don't make up success if there are errors
 
 Answer:'''
 
@@ -147,10 +147,23 @@ class Solver:
             return "No results available."
         
         lines = []
+        error_count = 0
+        
         for step in plan:
             step_id = step["id"]
             tool_name = step["tool"]
             result = results.get(step_id, "No result")
-            lines.append(f"- {tool_name}: {result}")
+            
+            # Check if this is an error result
+            result_str = str(result).lower()
+            if any(err in result_str for err in ['error', 'cannot', 'failed', 'invalid', 'unable']):
+                error_count += 1
+                lines.append(f"- {tool_name}: ERROR - {result}")
+            else:
+                lines.append(f"- {tool_name}: {result}")
+        
+        # If ALL results are errors, add explicit note
+        if error_count == len(plan) and error_count > 0:
+            lines.insert(0, "NOTE: All tool calls failed. Report the errors honestly.\n")
         
         return "\n".join(lines)

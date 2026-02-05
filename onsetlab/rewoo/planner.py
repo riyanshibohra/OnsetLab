@@ -7,11 +7,18 @@ from ..model.base import BaseModel
 from ..tools.base import BaseTool
 
 
-# Simple planner prompt
-PLANNER_PROMPT = '''TOOLS:
+# Planner prompt with dynamic few-shot examples
+PLANNER_PROMPT = '''You are a tool-calling assistant. Call ONE tool to complete the task.
+
+AVAILABLE TOOLS:
 {tools_description}
 
-Write ONE tool call to solve the task. Use EXACT tool names above.
+FORMAT: #E1 = tool_name(param1="value", param2=123)
+{examples_section}
+RULES:
+1. Use EXACT tool names from the list (no abbreviations)
+2. Use EXACT values from the task (copy numbers, strings, IDs exactly)
+3. Use named parameters: param="value" (not positional)
 {context_section}
 Task: {task}
 Answer: #E1 ='''
@@ -28,13 +35,19 @@ class Planner:
     def plan(self, task: str, context: Optional[str] = None) -> List[Dict[str, Any]]:
         """Generate execution plan for a task."""
         tools_desc = self._format_tools_description()
+        examples = self._generate_examples()
         
         context_section = ""
         if context:
             context_section = f"\nCONTEXT (previous results you can reference):\n{context}\n"
         
+        examples_section = ""
+        if examples:
+            examples_section = f"\nEXAMPLES:\n{examples}\n"
+        
         prompt = PLANNER_PROMPT.format(
             tools_description=tools_desc,
+            examples_section=examples_section,
             context_section=context_section,
             task=task
         )
@@ -46,8 +59,14 @@ class Planner:
             stop_sequences=["\n\n", "\n#E2", "Note:", "Explanation:", "---", "Task:"],
         )
         
-        # Prepend "#E1 =" since prompt ends with it
-        full_response = "#E1 =" + response
+        # Clean up response - remove leading #E1= if model repeated it
+        response = response.strip()
+        if response.startswith('#E1') or response.startswith('#E1 '):
+            # Model included the prefix, use as-is
+            full_response = response
+        else:
+            # Model didn't include prefix, add it
+            full_response = "#E1 = " + response
         
         if self.debug:
             print(f"\n[DEBUG] Planner raw response:\n{full_response}\n")
@@ -61,21 +80,70 @@ class Planner:
         
         return steps
     
+    def _generate_examples(self, max_examples: int = 3) -> str:
+        """Generate example tool calls based on available tools."""
+        examples = []
+        
+        for name, tool in list(self.tools.items())[:max_examples]:
+            tool_params = tool.parameters
+            
+            # Handle both formats
+            if "properties" in tool_params:
+                params = tool_params.get("properties", {})
+                required = tool_params.get("required", [])
+            else:
+                params = tool_params
+                required = [p for p, d in params.items() 
+                           if isinstance(d, dict) and d.get("required")]
+            
+            # Build example with required params only
+            example_params = []
+            for param_name, param_info in params.items():
+                if param_name in required or (isinstance(param_info, dict) and param_info.get("required")):
+                    param_type = param_info.get("type", "string") if isinstance(param_info, dict) else "string"
+                    
+                    # Generate sample value based on type
+                    if param_type == "integer":
+                        example_params.append(f'{param_name}=1')
+                    elif param_type == "boolean":
+                        example_params.append(f'{param_name}=true')
+                    else:
+                        example_params.append(f'{param_name}="value"')
+            
+            if example_params:
+                params_str = ", ".join(example_params)
+                examples.append(f"- #E1 = {name}({params_str})")
+        
+        return "\n".join(examples) if examples else ""
+    
     def _format_tools_description(self) -> str:
         """Format tools for the prompt with clear parameter details."""
         lines = []
         for name, tool in self.tools.items():
-            params = tool.parameters.get("properties", {})
-            required = tool.parameters.get("required", [])
+            tool_params = tool.parameters
+            
+            # Handle both formats:
+            # 1. JSON Schema: {"properties": {...}, "required": [...]}
+            # 2. Flat format: {"param1": {...}, "param2": {...}}
+            if "properties" in tool_params:
+                params = tool_params.get("properties", {})
+                required = tool_params.get("required", [])
+            else:
+                # Flat format from MCP wrapper
+                params = tool_params
+                required = [p for p, details in params.items() 
+                           if isinstance(details, dict) and details.get("required")]
             
             param_parts = []
             for p, details in params.items():
+                if not isinstance(details, dict):
+                    continue
                 p_type = details.get("type", "string")
-                req = " [required]" if p in required else ""
+                req = " [required]" if p in required or details.get("required") else ""
                 
                 # Show enum values if available
                 if "enum" in details:
-                    enum_values = "|".join(details["enum"])
+                    enum_values = "|".join(str(v) for v in details["enum"])
                     param_parts.append(f'{p}="{{{enum_values}}}"{req}')
                 else:
                     param_parts.append(f'{p}: {p_type}{req}')
@@ -112,19 +180,19 @@ class Planner:
             # Remove numbered list prefixes: "1. ", "2. ", etc.
             line = re.sub(r'^\d+\.\s*', '', line)
             
-            # Handle: #E1 = #E1 = ToolName(...) by removing duplicate
-            line = re.sub(r'^(#E\d+)\s*=\s*\1\s*=', r'\1 =', line)
+            # Handle: #E1 = #E1 = ToolName(...) or #E1 =#E1 = by removing duplicate
+            line = re.sub(r'^(#E\d+)\s*=\s*#E\d+\s*=', r'\1 =', line)
             
-            # Try pattern with #E prefix: #E1 = ToolName(params)
-            match = re.match(r'#E(\d+)\s*=\s*(\w+)\s*\((.+)\)', line)
+            # Try pattern with #E prefix: #E1 = ToolName(params) or #E1 = ToolName()
+            match = re.match(r'#E(\d+)\s*=\s*(\w+)\s*\((.*)\)', line)
             
             if match:
                 step_num = int(match.group(1))
                 tool_name = match.group(2)
                 params_str = match.group(3)
             else:
-                # Try pattern without #E prefix: ToolName(params)
-                match = re.match(r'(\w+)\s*\((.+)\)', line)
+                # Try pattern without #E prefix: ToolName(params) or ToolName()
+                match = re.match(r'(\w+)\s*\((.*)\)', line)
                 if not match:
                     continue
                 
@@ -154,14 +222,18 @@ class Planner:
     def _parse_params(self, params_str: str) -> Dict[str, Any]:
         """Parse parameter string into dict."""
         params = {}
+        params_str = params_str.strip()
         
-        # First, extract quoted values: param="value"
+        if not params_str:
+            return params
+        
+        # First, extract named quoted values: param="value"
         quoted_pattern = r'(\w+)\s*=\s*"([^"]*)"'
         for match in re.finditer(quoted_pattern, params_str):
             params[match.group(1)] = match.group(2)
         
         # Remove matched quoted params
-        remaining = re.sub(quoted_pattern, '', params_str)
+        remaining = re.sub(quoted_pattern, '', params_str).strip()
         
         # Extract unquoted values: param=#E1 or param=123 or param=word
         unquoted_pattern = r'(\w+)\s*=\s*([^,\s\)]+)'
@@ -171,9 +243,18 @@ class Planner:
                 continue
             value = match.group(2).strip()
             
+            # Skip None/null values - model shouldn't specify these
+            if value.lower() in ('none', 'null', 'undefined'):
+                continue
+            
             # Handle #E references
             if value.startswith('#E'):
                 params[key] = value
+            # Handle booleans
+            elif value.lower() == 'true':
+                params[key] = True
+            elif value.lower() == 'false':
+                params[key] = False
             # Handle numbers
             elif re.match(r'^[\d.\-]+$', value):
                 try:
@@ -183,6 +264,18 @@ class Planner:
             # Handle plain string values (like operation=difference)
             else:
                 params[key] = value
+        
+        # Handle positional arguments: "value1", "value2", ...
+        # This happens when model outputs ToolName("arg1", "arg2") instead of named params
+        if not params:
+            # Extract all quoted strings as positional args
+            positional_matches = re.findall(r'"([^"]*)"', params_str)
+            if positional_matches:
+                for i, val in enumerate(positional_matches):
+                    params[f"_positional_{i}"] = val
+            elif '=' not in params_str:
+                # Single unquoted value
+                params["_positional_0"] = params_str.strip('"\'')
         
         return params
     
@@ -204,7 +297,16 @@ class Planner:
         return unique
     
     def _normalize_tool_name(self, name: str) -> Optional[str]:
-        """Try to match tool name to actual tool, handling model mistakes."""
+        """
+        Validate tool name exists - strict matching like effGen.
+        
+        Only allows:
+        1. Exact match
+        2. Case-insensitive match
+        
+        No fuzzy matching - if tool doesn't exist, return None
+        and let the error propagate clearly.
+        """
         # Exact match
         if name in self.tools:
             return name
@@ -215,42 +317,131 @@ class Planner:
             if tool_name.lower() == name_lower:
                 return tool_name
         
-        # Partial/substring match (e.g., "Calc" -> "Calculator", "ToolCalculator" -> "Calculator")
-        # Works for any tool name without hardcoding
-        for tool_name in self.tools:
-            tool_lower = tool_name.lower()
-            # Check if tool name is contained in the given name or vice versa
-            if tool_lower in name_lower or name_lower in tool_lower:
-                return tool_name
-        
+        # No match found - don't guess
         return None
     
     def _validate_steps(self, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Validate steps - check tool exists and has required params."""
-        valid = []
+        """
+        Validate steps - check tool exists and has required params.
+        
+        Returns validated steps. Invalid steps are converted to error steps
+        so the Solver can explain what went wrong.
+        """
+        validated = []
         
         for step in steps:
             tool_name = step["tool"]
             
-            # Try to normalize the tool name
+            # Try to find the tool (strict matching)
             normalized = self._normalize_tool_name(tool_name)
+            
             if not normalized:
+                # Tool not found - create error step with helpful message
+                available = list(self.tools.keys())
+                
+                # Find similar tool names for suggestion
+                suggestions = self._find_similar_tools(tool_name, available)
+                
+                error_msg = f"Tool '{tool_name}' not found."
+                if suggestions:
+                    error_msg += f" Did you mean: {', '.join(suggestions)}?"
+                else:
+                    error_msg += f" Available tools: {', '.join(available[:5])}"
+                    if len(available) > 5:
+                        error_msg += f"... ({len(available)} total)"
+                
                 if self.debug:
-                    print(f"[DEBUG] Unknown tool: {tool_name}")
+                    print(f"[DEBUG] {error_msg}")
+                
+                # Add as error step so Solver sees it
+                step["error"] = error_msg
+                validated.append(step)
                 continue
             
             # Update step with normalized name
             step["tool"] = normalized
             
             tool = self.tools[normalized]
-            required = tool.parameters.get("required", [])
+            tool_params = tool.parameters
+            
+            # Map positional args to param names BEFORE validation
+            step["params"] = self._map_positional_params(tool_params, step["params"])
+            
+            # Get required params - handle both formats
+            if "required" in tool_params and isinstance(tool_params.get("required"), list):
+                required = tool_params["required"]
+            else:
+                required = [p for p, details in tool_params.items()
+                           if isinstance(details, dict) and details.get("required")]
             
             missing = [p for p in required if p not in step["params"]]
             if missing:
+                error_msg = f"Tool '{normalized}' missing required params: {missing}"
                 if self.debug:
-                    print(f"[DEBUG] Missing params for {normalized}: {missing}")
-                continue
+                    print(f"[DEBUG] {error_msg}")
+                step["error"] = error_msg
             
-            valid.append(step)
+            validated.append(step)
         
-        return valid
+        return validated
+    
+    def _map_positional_params(
+        self,
+        tool_params: Dict[str, Any],
+        params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Map positional arguments to parameter names during validation.
+        
+        This allows SLM to use write_file("path", "content") format.
+        """
+        # Collect all positional args
+        positional_args = []
+        i = 0
+        while f"_positional_{i}" in params:
+            positional_args.append(params.pop(f"_positional_{i}"))
+            i += 1
+        
+        if not positional_args:
+            return params
+        
+        # Build ordered list of params: required first, then optional
+        required_params = []
+        optional_params = []
+        
+        for param_name, param_info in tool_params.items():
+            if isinstance(param_info, dict) and param_info.get("required"):
+                required_params.append(param_name)
+            else:
+                optional_params.append(param_name)
+        
+        # Combine: required first, then optional
+        ordered_params = required_params + optional_params
+        
+        # Map positional args to params in order
+        for i, positional_value in enumerate(positional_args):
+            if i < len(ordered_params):
+                param_name = ordered_params[i]
+                params[param_name] = positional_value
+        
+        return params
+    
+    def _find_similar_tools(self, name: str, available: List[str], max_suggestions: int = 3) -> List[str]:
+        """Find similar tool names for helpful suggestions."""
+        name_lower = name.lower()
+        name_words = set(name_lower.replace('_', ' ').replace('-', ' ').split())
+        
+        scored = []
+        for tool_name in available:
+            tool_lower = tool_name.lower()
+            tool_words = set(tool_lower.replace('_', ' ').replace('-', ' ').split())
+            
+            # Score by word overlap
+            overlap = len(name_words & tool_words)
+            if overlap > 0:
+                scored.append((tool_name, overlap))
+        
+        # Sort by overlap descending
+        scored.sort(key=lambda x: x[1], reverse=True)
+        
+        return [t[0] for t in scored[:max_suggestions]]
