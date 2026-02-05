@@ -1,13 +1,3 @@
-specs/
-run_pipeline.py
-colab_test.ipynb
-tests/
-test_xlam/
-web/
-approach2/
-
-
-
 # Python
 __pycache__/
 *.py[cod]
@@ -21,29 +11,15 @@ eggs/
 *.egg
 
 # Virtual environments
-myvenv/
 venv/
 .venv/
 env/
+myvenv/
 
 # Environment variables
 .env
 .env.local
-
-# Test outputs (not the tests themselves!)
-*.jsonl
-test_output*.jsonl
-test_data_v2/
-test_data_v3/
-
-# Standalone test scripts (not pytest tests)
-test_data_gen_v2.py
-test_data_gen_v3.py
-test_data_generator.py
-
-# Generated agent builds (keep examples)
-agent_build/
-my_calendar_agent/
+.env.*
 
 # IDE
 .idea/
@@ -52,12 +28,14 @@ my_calendar_agent/
 *.swo
 .DS_Store
 
-# Reference/docs (internal only)
-_reference/
-UserJourneywithMockups.md
-Step 1 - Manual Agent Builder (Cursor Prompt).md
-TRAINING_DATA_GUIDE.md
-SDK_PLAN.md
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.jsonl
 
-# Old data_generation folder (deprecated)
-onsetlab/data_generation/
+# Build artifacts
+agent_build/
+
+# OS
+Thumbs.db
