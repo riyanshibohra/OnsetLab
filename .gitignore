@@ -15,6 +15,7 @@ venv/
 .venv/
 env/
 myvenv/
+test_agent.py
 
 # Environment variables
 .env
@@ -30,6 +31,7 @@ myvenv/
 .DS_Store
 
 # Testing
+tests/
 .pytest_cache/
 .coverage
 htmlcov/
