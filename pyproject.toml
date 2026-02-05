@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "onsetlab"
 version = "0.1.0"
-description = "Reliable SLM agents with REWOO strategy. Plan once, execute fast, verify always."
+description = "Build, benchmark, and package local SLM agents. No API keys, no cloud."
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
 authors = [
     {name = "OnsetLab Team"}
@@ -22,11 +22,12 @@ keywords = [
     "mcp",
     "model-context-protocol",
     "ollama",
+    "local-ai",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -38,14 +39,30 @@ classifiers = [
 # Core dependencies
 dependencies = [
     "requests>=2.28.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
+# For API server mode in exported agents
+server = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+]
+# For binary export
+binary = [
+    "pyinstaller>=5.0.0",
+]
 # For development
 dev = [
     "pytest>=7.0.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
+]
+# Everything
+all = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "pyinstaller>=5.0.0",
 ]
 
 [project.urls]
@@ -59,7 +76,7 @@ where = ["."]
 include = ["onsetlab*"]
 
 [tool.setuptools.package-data]
-onsetlab = ["py.typed", "mcp/registry/*.json"]
+onsetlab = ["py.typed", "mcp/registry/*.json", "benchmark/tests/*.json"]
 
 # Ruff configuration (linter)
 [tool.ruff]
