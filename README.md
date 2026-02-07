@@ -1,25 +1,31 @@
+<div align="center">
+
 # OnsetLab
 
-### Make small models do actual work.
+### Tool-calling AI agents that run locally.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-3776AB.svg?logo=python&logoColor=white)](https://python.org)
 [![PyPI](https://img.shields.io/pypi/v/onsetlab.svg)](https://pypi.org/project/onsetlab/)
 [![Ollama](https://img.shields.io/badge/Runs%20on-Ollama-000000.svg)](https://ollama.com)
 
-[Install](#install) · [Quick Start](#quick-start) · [MCP Servers](#mcp-servers) · [Architecture](#architecture)
+[Install](#install) · [Quick Start](#quick-start) · [Architecture](#architecture) · [MCP Servers](#mcp-servers)
+
+</div>
 
 ---
 
 ## The Problem
 
-Agent frameworks send every request to an API. They cost money per call and break when the network goes down.
+Building AI agents today means paying per API call, sending every request to someone else's server, and hoping the network stays up.
 
-Small language models (SLMs) can run locally for free. They're fast, private, and surprisingly capable. But they can't do tool calling reliably. They hallucinate tool names, mess up parameters, and don't know when to stop.
+Local models are fast, free, and private. But ask one to call a tool and it falls apart. Wrong function names, broken parameters, infinite loops.
+
+**The models are capable. The framework wasn't.**
 
 ## The Solution
 
-OnsetLab makes 3B-7B models do reliable tool calling through a hybrid REWOO/ReAct architecture. The framework handles planning, execution, and error recovery. The model only does what it's actually good at: one step at a time.
+OnsetLab makes 3B-7B models do reliable tool calling through a hybrid REWOO/ReAct architecture. The framework handles planning, execution, and error recovery. The model only does what it's good at: one step at a time.
 
 ```
 pip install onsetlab  →  connect Ollama  →  add tools  →  run
@@ -59,33 +65,30 @@ The agent routes the query, builds an execution plan, calls the calculator, and 
 
 ## Architecture
 
-```
-                              ┌─────────┐
-                              │  Query  │
-                              └────┬────┘
-                                   │
-                            ┌──────▼──────┐
-                            │   Router    │
-                            │  (model)    │
-                            └───┬─────┬───┘
-                                │     │
-               no tools needed  │     │  tools needed
-                                │     │
-                         ┌──────▼┐   ┌▼──────────────────────────────┐
-                         │DIRECT │   │         REWOO Pipeline        │
-                         │       │   │                                │
-                         │answer │   │  Planner → Executor → Solver  │
-                         │from   │   │                                │
-                         │model  │   │  on failure:                   │
-                         │       │   │  ReAct Fallback                │
-                         │       │   │  think → act → observe         │
-                         └───┬───┘   └──────────────┬────────────────┘
-                             │                      │
-                             └──────────┬───────────┘
-                                        ▼
-                                  ┌──────────┐
-                                  │  Answer  │
-                                  └──────────┘
+```mermaid
+flowchart TD
+    Q["🔍 Query"] --> R["Router (model-driven)"]
+
+    R -->|"no tools needed"| D["DIRECT — answer from model knowledge"]
+    R -->|"tools needed"| P["Planner — THINK → PLAN"]
+
+    P --> E["Executor — run tools, resolve dependencies"]
+    E --> S["Solver — synthesize final answer"]
+
+    P -. "plan fails" .-> RE["ReAct Fallback — think → act → observe"]
+
+    D --> A["✅ Answer"]
+    S --> A
+    RE --> A
+
+    style Q fill:#1a1a2e,stroke:#e94560,color:#fff
+    style R fill:#16213e,stroke:#0f3460,color:#fff
+    style D fill:#0f3460,stroke:#533483,color:#fff
+    style P fill:#0f3460,stroke:#533483,color:#fff
+    style E fill:#0f3460,stroke:#533483,color:#fff
+    style S fill:#0f3460,stroke:#533483,color:#fff
+    style RE fill:#533483,stroke:#e94560,color:#fff
+    style A fill:#1a1a2e,stroke:#e94560,color:#fff
 ```
 
 ### Router
@@ -94,7 +97,7 @@ The model itself decides the strategy. No regex, no keyword matching. The SLM re
 
 ### Planner
 
-Generates a structured `THINK → PLAN` output. Each plan step specifies a tool, parameters, and dependencies on previous steps. Tool rules are auto-generated from JSON schemas, so the model sees exactly what each tool can do and how to call it.
+Generates a structured `THINK → PLAN` output. Each plan step specifies a tool, parameters, and dependencies on previous steps. Tool rules are auto-generated from JSON schemas, so the model sees exactly what each tool can do.
 
 ### Executor
 
@@ -102,7 +105,7 @@ Resolves dependencies between steps and runs tool calls in order. If step 2 depe
 
 ### ReAct Fallback
 
-If REWOO planning fails (bad format, wrong tool, missing params), the agent switches to iterative `Thought → Action → Observation` loops. This catches edge cases that structured planning misses, and recovers without restarting.
+If REWOO planning fails (bad format, wrong tool, missing params), the agent switches to iterative `Thought → Action → Observation` loops. Catches edge cases that structured planning misses.
 
 ---
 
@@ -160,10 +163,6 @@ agent.add_mcp_server(server)
 | `UnitConverter` | Length, weight, temperature, volume, speed, data |
 | `TextProcessor` | Word count, find/replace, case transforms, pattern extraction |
 | `RandomGenerator` | Random numbers, UUIDs, passwords, dice rolls, coin flips |
-
-```python
-from onsetlab.tools import Calculator, DateTime, UnitConverter, TextProcessor, RandomGenerator
-```
 
 ## Tested Models
 
