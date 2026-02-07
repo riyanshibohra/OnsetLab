@@ -1,0 +1,182 @@
+[
+  {
+    "id": "ts_001",
+    "category": "tool_selection",
+    "query": "What is 15 + 27?",
+    "expected": {
+      "tool": "calculator",
+      "params": {"expression": "15+27"}
+    }
+  },
+  {
+    "id": "ts_002",
+    "category": "tool_selection",
+    "query": "What time is it right now?",
+    "expected": {
+      "tool": "datetime",
+      "params": {}
+    }
+  },
+  {
+    "id": "ts_003",
+    "category": "tool_selection",
+    "query": "Convert 100 kilometers to miles",
+    "expected": {
+      "tool": "unitconverter",
+      "params": {"value": "100", "from_unit": "km", "to_unit": "miles"}
+    }
+  },
+  {
+    "id": "ts_004",
+    "category": "tool_selection",
+    "query": "Count the words in: Hello world this is a test",
+    "expected": {
+      "tool": "textprocessor",
+      "params": {"operation": "word_count", "text": "Hello world this is a test"}
+    }
+  },
+  {
+    "id": "ts_005",
+    "category": "tool_selection",
+    "query": "Calculate the square root of 144",
+    "expected": {
+      "tool": "calculator",
+      "params": {"expression": "sqrt(144)"}
+    }
+  },
+  {
+    "id": "ts_006",
+    "category": "tool_selection",
+    "query": "What's 20% of 85?",
+    "expected": {
+      "tool": "calculator",
+      "params": {"expression": "85*0.20"}
+    }
+  },
+  {
+    "id": "ts_007",
+    "category": "tool_selection",
+    "query": "Convert 32 Fahrenheit to Celsius",
+    "expected": {
+      "tool": "unitconverter",
+      "params": {"value": "32", "from_unit": "F", "to_unit": "C"}
+    }
+  },
+  {
+    "id": "ts_008",
+    "category": "tool_selection",
+    "query": "What day of the week is it today?",
+    "expected": {
+      "tool": "datetime",
+      "params": {}
+    }
+  },
+  {
+    "id": "ts_009",
+    "category": "tool_selection",
+    "query": "Make this text uppercase: hello world",
+    "expected": {
+      "tool": "textprocessor",
+      "params": {"operation": "uppercase", "text": "hello world"}
+    }
+  },
+  {
+    "id": "ts_010",
+    "category": "tool_selection",
+    "query": "What is 2 to the power of 10?",
+    "expected": {
+      "tool": "calculator",
+      "params": {"expression": "2**10"}
+    }
+  },
+  {
+    "id": "pe_001",
+    "category": "param_extraction",
+    "query": "Add 123 and 456",
+    "expected": {
+      "tool": "calculator",
+      "params": {"expression": "123+456"}
+    }
+  },
+  {
+    "id": "pe_002",
+    "category": "param_extraction",
+    "query": "Convert 5 pounds to kilograms",
+    "expected": {
+      "tool": "unitconverter",
+      "params": {"value": "5", "from_unit": "lb", "to_unit": "kg"}
+    }
+  },
+  {
+    "id": "pe_003",
+    "category": "param_extraction",
+    "query": "Reverse this text: Python is great",
+    "expected": {
+      "tool": "textprocessor",
+      "params": {"operation": "reverse", "text": "Python is great"}
+    }
+  },
+  {
+    "id": "pe_004",
+    "category": "param_extraction",
+    "query": "What is 99 divided by 3?",
+    "expected": {
+      "tool": "calculator",
+      "params": {"expression": "99/3"}
+    }
+  },
+  {
+    "id": "pe_005",
+    "category": "param_extraction",
+    "query": "How many meters in 1 mile?",
+    "expected": {
+      "tool": "unitconverter",
+      "params": {"value": "1", "from_unit": "mile", "to_unit": "m"}
+    }
+  },
+  {
+    "id": "pe_006",
+    "category": "param_extraction",
+    "query": "Calculate 15 times 8",
+    "expected": {
+      "tool": "calculator",
+      "params": {"expression": "15*8"}
+    }
+  },
+  {
+    "id": "pe_007",
+    "category": "param_extraction",
+    "query": "Convert 1000 grams to pounds",
+    "expected": {
+      "tool": "unitconverter",
+      "params": {"value": "1000", "from_unit": "g", "to_unit": "lb"}
+    }
+  },
+  {
+    "id": "pe_008",
+    "category": "param_extraction",
+    "query": "Make lowercase: TESTING 123",
+    "expected": {
+      "tool": "textprocessor",
+      "params": {"operation": "lowercase", "text": "TESTING 123"}
+    }
+  },
+  {
+    "id": "pe_009",
+    "category": "param_extraction",
+    "query": "What is the absolute value of -42?",
+    "expected": {
+      "tool": "calculator",
+      "params": {"expression": "abs(-42)"}
+    }
+  },
+  {
+    "id": "pe_010",
+    "category": "param_extraction",
+    "query": "Convert 72 degrees Fahrenheit to Celsius",
+    "expected": {
+      "tool": "unitconverter",
+      "params": {"value": "72", "from_unit": "fahrenheit", "to_unit": "celsius"}
+    }
+  }
+]
