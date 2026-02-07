@@ -3,7 +3,7 @@ OnsetLab Packaging - Export agents in multiple formats.
 
 Supported formats:
 - config: YAML/JSON configuration file
-- docker: Dockerfile + supporting files
+- docker: Dockerfile + supporting files (engine: "ollama" or "vllm")
 - binary: Standalone executable (requires PyInstaller)
 """
 
@@ -23,9 +23,17 @@ def export_agent(agent, format: str, output: str, **kwargs) -> str:
         format: Export format - "config", "docker", or "binary"
         output: Output path (file or directory)
         **kwargs: Format-specific options
+            For docker: engine="vllm" for GPU-accelerated inference
         
     Returns:
         Path to exported artifact
+        
+    Examples:
+        # Standard Ollama deployment
+        export_agent(agent, "docker", "./deploy")
+        
+        # vLLM deployment (5-10x faster, requires GPU)
+        export_agent(agent, "docker", "./deploy", engine="vllm")
     """
     if format == "config":
         return ConfigExporter.export(agent, output, **kwargs)
