@@ -76,7 +76,7 @@ where = ["."]
 include = ["onsetlab*"]
 
 [tool.setuptools.package-data]
-onsetlab = ["py.typed", "mcp/registry/*.json", "benchmark/tests/*.json"]
+onsetlab = ["py.typed", "mcp/registry/*.json"]
 
 # Ruff configuration (linter)
 [tool.ruff]

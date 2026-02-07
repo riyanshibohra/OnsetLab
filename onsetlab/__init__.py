@@ -15,9 +15,11 @@ from .tools import (
     UnitConverter,
     TextProcessor,
     RandomGenerator,
+    CodeExecutorTool,
 )
 from .benchmark import Benchmark
 from .router import Router, Strategy
+from .skills import generate_tool_rules, generate_examples
 
 __all__ = [
     # Core
@@ -26,6 +28,9 @@ __all__ = [
     "Benchmark",
     "Router",
     "Strategy",
+    # Skills (auto-generated from schemas)
+    "generate_tool_rules",
+    "generate_examples",
     # Tools
     "BaseTool",
     "Calculator",
@@ -33,6 +38,7 @@ __all__ = [
     "UnitConverter",
     "TextProcessor",
     "RandomGenerator",
+    "CodeExecutorTool",
     # Meta
     "__version__",
 ]

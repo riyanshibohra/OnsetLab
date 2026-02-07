@@ -28,17 +28,6 @@ from .mcp.server import MCPServer
 from .router import Router, Strategy, RoutingDecision
 
 
-# Patterns for casual messages that don't need tools
-CASUAL_PATTERNS = [
-    r'^(hi|hey|hello|yo|sup|hiya|howdy)[\s!.?]*$',
-    r'^(bye|goodbye|see ya|later|cya)[\s!.?]*$',
-    r'^(thanks|thank you|thx|ty)[\s!.?]*$',
-    r'^(ok|okay|sure|got it|understood)[\s!.?]*$',
-    r'^(yes|no|yeah|nope|yep)[\s!.?]*$',
-    r'^(good|great|nice|cool|awesome)[\s!.?]*$',
-    r"^(how are you|how's it going|what's up)[\s!.?]*$",
-]
-
 
 @dataclass
 class AgentResult:
@@ -116,7 +105,7 @@ class Agent:
         self._verifier = Verifier(self._model, debug=debug) if verify else None
         self._solver = Solver(self._model)
         self._react = ReactFallback(self._model, all_tools, debug=debug) if react_fallback else None
-        self._router = Router(all_tools, debug=debug) if routing else None
+        self._router = Router(self._model, all_tools, debug=debug) if routing else None
         
         # Setup memory - stores conversation with results
         self._memory = ConversationMemory(max_turns=10) if memory else None
@@ -140,14 +129,6 @@ class Agent:
                     print(f"[DEBUG] Failed to load MCP server {server.name}: {e}")
         
         return all_tools
-    
-    def _is_casual(self, query: str) -> bool:
-        """Check if query is a casual message that doesn't need tools."""
-        query_lower = query.lower().strip()
-        for pattern in CASUAL_PATTERNS:
-            if re.match(pattern, query_lower, re.IGNORECASE):
-                return True
-        return False
     
     def _get_system_context(self) -> str:
         """Get system context with current datetime."""
@@ -239,9 +220,9 @@ class Agent:
         Run a query using the hybrid approach.
         
         Flow:
-        1. Route: Classify task and select optimal strategy
-        2. Execute: Run chosen strategy (REWOO, ReAct, or Direct)
-        3. Fallback: If primary fails, try alternate strategy
+        1. Route: Model classifies DIRECT vs TOOL
+        2. Execute: DIRECT answers without tools; REWOO plans + executes
+        3. Fallback: If REWOO fails, ReAct corrects
         """
         slm_calls = 0
         used_react = False
@@ -254,38 +235,18 @@ class Agent:
         if self._debug:
             print(f"\n[DEBUG] Context:\n{context}\n")
         
-        # Handle casual messages directly (skip routing)
-        if self._is_casual(query):
-            if self._debug:
-                print(f"[DEBUG] Detected casual message, skipping routing")
-            answer = self._solver.solve(query, [], {}, context)
-            slm_calls = 1
-            
-            if self._memory is not None:
-                self._memory.add_user_message(query)
-                self._memory.add_assistant_message(answer)
-            
-            return AgentResult(
-                answer=answer,
-                plan=[],
-                results={},
-                verified=True,
-                slm_calls=slm_calls,
-                strategy_used="direct"
-            )
-        
         # ========================================
-        # STEP 1: ROUTE - Select optimal strategy
+        # STEP 1: ROUTE — model decides DIRECT vs TOOL
         # ========================================
         if self._routing_enabled and self._router:
-            routing_decision = self._router.route(query)
+            routing_decision = self._router.route(query, context or "")
+            slm_calls += 1  # Router uses one model call
             
             if self._debug:
                 print(f"\n[DEBUG] Routing Decision:")
                 print(f"  Strategy: {routing_decision.strategy.value}")
                 print(f"  Confidence: {routing_decision.confidence:.0%}")
                 print(f"  Reason: {routing_decision.reason}")
-                print(f"  Matched tools: {routing_decision.matched_tools}")
         else:
             # Default to REWOO if routing disabled
             routing_decision = RoutingDecision(
@@ -296,7 +257,7 @@ class Agent:
             )
         
         # ========================================
-        # STEP 2: EXECUTE - Run chosen strategy
+        # STEP 2: EXECUTE
         # ========================================
         
         # DIRECT: No tool execution needed
@@ -305,7 +266,7 @@ class Agent:
                 print(f"[DEBUG] Using DIRECT strategy (no tools)")
             
             answer = self._handle_direct(query, context)
-            slm_calls = 1
+            slm_calls += 1
             strategy_used = "direct"
             
             if self._memory is not None:
@@ -322,42 +283,7 @@ class Agent:
                 routing_decision=routing_decision
             )
         
-        # REACT: Iterative reasoning for exploratory tasks
-        if routing_decision.strategy == Strategy.REACT:
-            if self._debug:
-                print(f"[DEBUG] Using REACT strategy (exploratory task)")
-            
-            if self._react:
-                answer, plan, results = self._react.run(query, context)
-                slm_calls = len(plan) + 1
-                strategy_used = "react"
-                used_react = True
-                self._last_results = results
-                
-                if self._memory is not None:
-                    self._memory.add_user_message(query)
-                    if results:
-                        result_summary = ", ".join([f"{k}={str(v)[:50]}" for k, v in results.items()])
-                        self._memory.add_assistant_message(f"{answer} [Results: {result_summary}]")
-                    else:
-                        self._memory.add_assistant_message(answer)
-                
-                return AgentResult(
-                    answer=answer,
-                    plan=plan,
-                    results=results,
-                    verified=True,
-                    slm_calls=slm_calls,
-                    used_react_fallback=True,
-                    strategy_used=strategy_used,
-                    routing_decision=routing_decision
-                )
-            else:
-                # React not available, fall through to REWOO
-                if self._debug:
-                    print(f"[DEBUG] ReAct not available, falling back to REWOO")
-        
-        # REWOO: Plan-first execution (default)
+        # REWOO: Plan-first execution (with ReAct fallback on failure)
         if self._debug:
             print(f"[DEBUG] Using REWOO strategy (plan-first)")
         
@@ -556,7 +482,7 @@ Fix the parameters and try again with the SAME tool ({tool})."""
         if self._react_fallback_enabled:
             self._react = ReactFallback(self._model, all_tools, debug=self._debug)
         if self._routing_enabled:
-            self._router = Router(all_tools, debug=self._debug)
+            self._router = Router(self._model, all_tools, debug=self._debug)
     
     def disconnect_mcp_servers(self) -> None:
         """Disconnect all MCP servers."""

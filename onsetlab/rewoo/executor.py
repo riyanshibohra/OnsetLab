@@ -1,25 +1,40 @@
-"""REWOO Executor - executes plan steps and resolves dependencies."""
+"""REWOO Executor - executes plan steps and resolves dependencies.
+
+Supports parallel execution of independent steps for faster completion.
+"""
 
 import re
-from typing import List, Dict, Any, Optional
+import logging
+from typing import List, Dict, Any, Optional, Set
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..tools.base import BaseTool
+
+logger = logging.getLogger(__name__)
 
 
 class Executor:
     """
-    REWOO Executor - executes plan steps in order.
+    REWOO Executor - executes plan steps.
     
     Handles dependency resolution by substituting #E1, #E2, etc.
     with actual results from previous steps.
+    
+    Supports parallel execution: independent steps (no shared
+    dependencies) run concurrently via ThreadPoolExecutor.
     """
     
-    def __init__(self, tools: List[BaseTool]):
+    def __init__(self, tools: List[BaseTool], parallel: bool = False, max_workers: int = 4):
         self.tools = {t.name: t for t in tools}
+        self.parallel = parallel
+        self.max_workers = max_workers
     
     def execute(self, plan: List[Dict[str, Any]]) -> Dict[str, str]:
         """
         Execute all steps in the plan.
+        
+        If parallel=True, independent steps run concurrently.
+        Otherwise, steps run sequentially (original behavior).
         
         Args:
             plan: List of plan steps from Planner.
@@ -27,44 +42,142 @@ class Executor:
         Returns:
             Dict mapping step IDs to results.
         """
+        if self.parallel and len(plan) > 1:
+            return self._execute_parallel(plan)
+        return self._execute_sequential(plan)
+
+    def _execute_sequential(self, plan: List[Dict[str, Any]]) -> Dict[str, str]:
+        """Execute steps one at a time (original behavior)."""
         results = {}
         
         for step in plan:
-            step_id = step["id"]
-            tool_name = step["tool"]
-            params = step["params"].copy()
-            
-            # Resolve dependencies
-            params = self._resolve_dependencies(params, results)
-            
-            # Check for validation errors from planner
-            if "error" in step:
-                results[step_id] = f"Error: {step['error']}"
-                continue
-            
-            # Execute tool
-            if tool_name not in self.tools:
-                results[step_id] = f"Error: Unknown tool '{tool_name}'"
-                continue
-            
-            try:
-                tool = self.tools[tool_name]
-                
-                # Map positional arguments to correct parameter names
-                params = self._map_positional_params(tool, params)
-                
-                # Normalize parameter names (handle camelCase/snake_case, typos)
-                params = self._normalize_param_names(tool, params)
-                
-                result = tool.execute(**params)
-                results[step_id] = str(result)
-            except TypeError as e:
-                # Handle missing/extra parameters gracefully
-                results[step_id] = f"Error: {str(e)}"
-            except Exception as e:
-                results[step_id] = f"Error: {str(e)}"
+            result = self._execute_step(step, results)
+            results[step["id"]] = result
         
         return results
+
+    def _execute_parallel(self, plan: List[Dict[str, Any]]) -> Dict[str, str]:
+        """
+        Execute independent steps concurrently, dependent steps sequentially.
+        
+        Algorithm:
+        1. Build dependency graph from #E references in params
+        2. Group steps into "waves" via topological sort
+        3. Execute each wave in parallel
+        """
+        results = {}
+        waves = self._build_execution_waves(plan)
+
+        logger.info(
+            f"Parallel executor: {len(plan)} steps → "
+            f"{len(waves)} waves: {[len(w) for w in waves]}"
+        )
+
+        for wave_idx, wave in enumerate(waves):
+            if len(wave) == 1:
+                # Single step — run directly (no thread overhead)
+                step = wave[0]
+                results[step["id"]] = self._execute_step(step, results)
+            else:
+                # Multiple independent steps — run concurrently
+                with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+                    futures = {}
+                    for step in wave:
+                        # Snapshot results so threads don't race on dict reads
+                        results_snapshot = dict(results)
+                        future = pool.submit(
+                            self._execute_step, step, results_snapshot
+                        )
+                        futures[future] = step["id"]
+
+                    for future in as_completed(futures):
+                        step_id = futures[future]
+                        try:
+                            results[step_id] = future.result()
+                        except Exception as e:
+                            results[step_id] = f"Error: {e}"
+
+        return results
+
+    def _build_execution_waves(
+        self, plan: List[Dict[str, Any]]
+    ) -> List[List[Dict[str, Any]]]:
+        """
+        Group steps into execution waves using topological sort.
+        
+        Steps in the same wave have no mutual dependencies and can
+        run in parallel.  Steps in later waves depend on earlier waves.
+        """
+        # Build id → step mapping
+        step_map = {s["id"]: s for s in plan}
+
+        # Extract dependencies for each step
+        deps: Dict[str, Set[str]] = {}
+        for step in plan:
+            step_deps: Set[str] = set()
+            for val in step.get("params", {}).values():
+                if isinstance(val, str):
+                    for ref in re.findall(r'#E\d+', val):
+                        if ref in step_map:
+                            step_deps.add(ref)
+            # Also check depends_on field if present
+            for d in step.get("depends_on", []):
+                if d in step_map:
+                    step_deps.add(d)
+            deps[step["id"]] = step_deps
+
+        # Topological sort into waves (Kahn's algorithm)
+        remaining = set(step_map.keys())
+        waves: List[List[Dict[str, Any]]] = []
+
+        while remaining:
+            # Find all steps whose dependencies are fully resolved
+            ready = [
+                sid for sid in remaining
+                if deps[sid].issubset(set(step_map.keys()) - remaining)
+            ]
+            if not ready:
+                # Cycle detected — just run the rest sequentially
+                waves.append([step_map[sid] for sid in remaining])
+                break
+            waves.append([step_map[sid] for sid in ready])
+            remaining -= set(ready)
+
+        return waves
+
+    def _execute_step(
+        self, step: Dict[str, Any], results: Dict[str, str]
+    ) -> str:
+        """Execute a single plan step and return the result string."""
+        tool_name = step["tool"]
+        params = step["params"].copy()
+
+        # Resolve dependencies
+        params = self._resolve_dependencies(params, results)
+
+        # Check for validation errors from planner
+        if "error" in step:
+            return f"Error: {step['error']}"
+
+        # Execute tool
+        if tool_name not in self.tools:
+            return f"Error: Unknown tool '{tool_name}'"
+
+        try:
+            tool = self.tools[tool_name]
+
+            # Map positional arguments to correct parameter names
+            params = self._map_positional_params(tool, params)
+
+            # Normalize parameter names (handle camelCase/snake_case, typos)
+            params = self._normalize_param_names(tool, params)
+
+            result = tool.execute(**params)
+            return str(result)
+        except TypeError as e:
+            return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error: {str(e)}"
     
     def _map_positional_params(
         self,
