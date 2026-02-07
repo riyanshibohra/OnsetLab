@@ -91,22 +91,32 @@ class DateTime(BaseTool):
         date: str = None,
         date2: str = None,
         days: int = None,
-        timezone: str = None
+        timezone: str = None,
+        # Also accept year/month/day as separate params (LLM flexibility)
+        year: int = None,
+        month: int = None,
+        day: int = None,
+        **kwargs,  # Ignore any extra params
     ) -> str:
         """
         Execute datetime operation.
         
         Args:
             operation: The operation to perform.
-            date: Primary date for operations.
+            date: Primary date for operations (or use year/month/day).
             date2: Secondary date for difference calculation.
             days: Number of days to add/subtract.
             timezone: Timezone name.
+            year/month/day: Alternative way to specify date.
             
         Returns:
             Result as string.
         """
         try:
+            # If year/month/day provided separately, construct date string
+            if not date and year and month and day:
+                date = f"{year}-{month:02d}-{day:02d}"
+            
             if operation == "now":
                 return self._get_now(timezone)
             
