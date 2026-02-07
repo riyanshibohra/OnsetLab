@@ -1,8 +1,8 @@
 """Agent service - wraps OnsetLab SDK for web use.
 
-Hybrid REWOO/ReAct agent matching the SDK's Agent class:
-1. Router picks strategy (REWOO, REACT, DIRECT)
-2. REWOO runs first for structured tasks
+Model-driven REWOO/ReAct agent:
+1. Router (model-driven) classifies DIRECT vs TOOL
+2. REWOO plans + executes for tool tasks
 3. If REWOO fails → ReAct fallback with failure context
 4. ReAct iteratively corrects (fixes wrong tool names, missing params, etc.)
 """
@@ -31,7 +31,7 @@ from onsetlab.rewoo.executor import Executor
 from onsetlab.rewoo.solver import Solver
 from onsetlab.rewoo.react_fallback import ReactFallback
 from onsetlab.router import Router, Strategy
-from onsetlab.skills import detect_skill, get_skill_context, get_skill_for_query
+from onsetlab.skills import generate_tool_rules
 
 from .model_service import GroqModel
 
@@ -118,19 +118,6 @@ ALL_TOOLS = list(TOOL_MAP.keys())
 
 # Max MCP tools to show to Planner/ReAct (small models can't handle 40+)
 MAX_MCP_TOOLS_FOR_PLANNER = 8
-
-INTENT_PROMPT = """Decide: does this message need a tool/API call, or can you answer directly?
-
-Tools available: {tools}
-
-Conversation:
-{context}
-
-User: {query}
-
-Reply with ONLY one word: ACTION or DIRECT
-- ACTION = needs a tool call (create, list, search, compute, etc.)
-- DIRECT = answer from knowledge or conversation context"""
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +218,25 @@ def _filter_tools_for_query(
 # ---------------------------------------------------------------------------
 
 @dataclass
+class PipelineTrace:
+    """Trace of the agent pipeline for the UI."""
+    router_decision: str = ""
+    router_reason: str = ""
+    tools_total: int = 0
+    tools_filtered: int = 0
+    tools_selected: List[str] = None
+    tool_rules: str = ""
+    planner_think: str = ""
+    planner_prompt: str = ""
+    fallback_used: bool = False
+    fallback_reason: str = ""
+
+    def __post_init__(self):
+        if self.tools_selected is None:
+            self.tools_selected = []
+
+
+@dataclass
 class AgentResult:
     """Result from agent execution."""
     answer: str
@@ -238,8 +244,12 @@ class AgentResult:
     results: Dict[str, str]
     strategy: str
     slm_calls: int
-    skill: str = ""            # Detected skill (github, slack, etc.)
-    parallel_waves: int = 0    # Number of execution waves (0 = sequential)
+    trace: PipelineTrace = None
+    parallel_waves: int = 0
+
+    def __post_init__(self):
+        if self.trace is None:
+            self.trace = PipelineTrace()
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +291,7 @@ class AgentService:
         # parallel=True enables concurrent execution of independent steps
         self._executor = Executor(tools, parallel=True)
         self._solver = Solver(model)
-        self._router = Router(tools)
+        self._router = Router(model, tools)
 
         # Planner & ReAct are created per-query when MCP tools are present
         # (to filter to the most relevant subset)
@@ -305,36 +315,24 @@ class AgentService:
         """Run the agent on a query using the hybrid approach."""
         logger.info(f"=== QUERY: {query!r} ===")
 
-        # Detect skill for this query (shown in UI)
-        self._detected_skill = get_skill_for_query(
-            query, self._mcp_tools or self.tools
-        ) or ""
+        # Initialize pipeline trace
+        self._trace = PipelineTrace(
+            tools_total=len(self.tools),
+        )
 
-        # Step 1: Route
-        routing = self._router.route(query)
+        # Step 1: Route — model decides DIRECT vs TOOL
+        routing = self._router.route(query, self.context or "")
+        self._trace.router_decision = routing.strategy.value.upper()
+        self._trace.router_reason = routing.reason
         logger.info(
             f"Router: strategy={routing.strategy.value}, "
             f"confidence={routing.confidence:.0%}, "
-            f"matched={routing.matched_tools}, "
             f"reason={routing.reason}"
         )
-
-        # When MCP tools are connected and the Router says DIRECT,
-        # ask the MODEL to classify intent instead of hardcoded rules.
-        if self._has_mcp_tools and routing.strategy == Strategy.DIRECT:
-            intent = self._classify_intent(query)
-            if intent == "ACTION":
-                routing.strategy = Strategy.REWOO
-                routing.reason = "Model classified as ACTION"
-                logger.info("Model override: DIRECT → REWOO")
-            else:
-                logger.info("Model confirmed: DIRECT (no tool needed)")
 
         # Step 2: Execute strategy
         if routing.strategy == Strategy.DIRECT:
             return self._execute_direct(query)
-        elif routing.strategy == Strategy.REACT:
-            return self._execute_react(query)
         else:
             return self._execute_rewoo(query)
 
@@ -349,34 +347,26 @@ class AgentService:
         return AgentResult(
             answer=answer, plan=[], results={},
             strategy="direct", slm_calls=1,
-            skill=self._detected_skill,
+            trace=self._trace,
         )
 
     def _handle_direct_response(self, query: str) -> str:
         """Generate a direct response without tools."""
-        query_lower = query.lower()
+        # Build tool awareness context so the model knows its capabilities
+        tool_names = [t.name for t in self.tools]
+        tool_list = ", ".join(tool_names) if tool_names else "none"
 
-        if any(w in query_lower for w in [
-            "what tools", "which tools", "available tools", "list tools"
-        ]):
-            builtin = [t.name for t in self._builtin_tools]
-            mcp = [t.name for t in self._mcp_tools]
-            parts = []
-            if builtin:
-                parts.append(f"Built-in: {', '.join(builtin)}")
-            if mcp:
-                parts.append(f"MCP ({len(mcp)} tools): {', '.join(mcp[:10])}")
-                if len(mcp) > 10:
-                    parts[-1] += f" ... and {len(mcp) - 10} more"
-            return "I have access to these tools: " + ". ".join(parts)
+        context_parts = []
+        if self.context:
+            context_parts.append(f"Conversation:\n{self.context}")
 
-        if any(w in query_lower for w in ["what can you do", "help", "capabilities"]):
-            msg = "I can help with calculations, date/time, unit conversions, and text processing."
-            if self._mcp_tools:
-                msg += " I also have MCP tools connected."
-            return msg
+        context_str = "\n\n".join(context_parts)
 
-        prompt = f"Answer this question directly and concisely:\n\n{query}\n\nAnswer:"
+        prompt = (
+            f"You are an AI assistant with access to these tools: {tool_list}\n"
+            f"{context_str}\n\n"
+            f"Answer this question directly and concisely:\n{query}\n\nAnswer:"
+        )
         return self.model.generate(prompt, max_tokens=256)
 
     # ------------------------------------------------------------------
@@ -391,15 +381,19 @@ class AgentService:
         """
         slm_calls = 0
 
-        # Get query-filtered Planner
-        planner = self._get_planner(query)
+        # Get query-filtered Planner & record tool filtering in trace
+        planner, filtered_tools = self._get_planner_with_trace(query)
 
-        # Build context: conversation history + skill-specific prompt
-        plan_context = self._build_skill_context(query)
+        # Record tool rules in trace
+        tool_rules = generate_tool_rules(filtered_tools)
+        self._trace.tool_rules = tool_rules
 
-        # Plan
-        plan = planner.plan(query, plan_context)
+        # Plan with reasoning (THINK → PLAN)
+        plan_result = planner.plan_with_reasoning(query, self.context)
+        plan = plan_result.steps
+        self._trace.planner_think = plan_result.think
         slm_calls += 1
+        logger.info(f"REWOO think: {plan_result.think}")
         logger.info(f"REWOO plan: {plan}")
 
         # Execute if we have a plan
@@ -417,7 +411,6 @@ class AgentService:
             if self._rescue_missing_params(query, plan, results):
                 logger.info("Params rescued → re-executing plan")
                 results = self._executor.execute(plan)
-                slm_calls += 0  # no extra LLM call
 
                 # If re-execution succeeds, solve normally
                 if not self._check_rewoo_failed(plan, results):
@@ -434,18 +427,21 @@ class AgentService:
                         answer=answer, plan=plan_steps,
                         results={k: str(v) for k, v in results.items()},
                         strategy="rewoo", slm_calls=slm_calls,
+                        trace=self._trace,
                     )
                 logger.info("Re-execution after rescue still failed")
 
-            # ---- Attempt 2: ReAct fallback (1 iteration — REWOO already
-            # identified the tool, ReAct just needs to fix params) ----
+            # ---- Attempt 2: ReAct fallback ----
             logger.info("REWOO failed → falling back to ReAct (1 iter)")
+            self._trace.fallback_used = True
+            self._trace.fallback_reason = self._summarize_errors(results)
             failure_context = self._build_failure_context(plan, results)
             react_result = self._run_react_with_solver(
                 query, failure_context, "rewoo->react",
                 max_iterations=1,
             )
             react_result.slm_calls += slm_calls
+            react_result.trace = self._trace
             return react_result
 
         # REWOO succeeded — solve
@@ -464,19 +460,11 @@ class AgentService:
         return AgentResult(
             answer=answer, plan=plan_steps, results=results_str,
             strategy="rewoo", slm_calls=slm_calls,
-            skill=self._detected_skill,
+            trace=self._trace,
         )
 
     # ------------------------------------------------------------------
-    # REACT strategy (direct, not fallback)
-    # ------------------------------------------------------------------
-
-    def _execute_react(self, query: str) -> AgentResult:
-        """Run ReAct strategy directly (for exploratory tasks)."""
-        return self._run_react_with_solver(query, self.context, "react")
-
-    # ------------------------------------------------------------------
-    # ReAct runner (shared by direct REACT and REWOO fallback)
+    # ReAct runner (used as REWOO fallback)
     # ------------------------------------------------------------------
 
     def _run_react_with_solver(
@@ -526,66 +514,7 @@ class AgentService:
         return AgentResult(
             answer=answer, plan=plan_steps, results=results_str,
             strategy=strategy_label, slm_calls=slm_calls,
-            skill=self._detected_skill,
         )
-
-    # ------------------------------------------------------------------
-    # Intent classification — model decides ACTION vs DIRECT
-    # ------------------------------------------------------------------
-
-    def _classify_intent(self, query: str) -> str:
-        """
-        Ask the model: does this query need a tool call or a direct answer?
-
-        Returns "ACTION" or "DIRECT".
-        """
-        tool_names = [t.name for t in (self._mcp_tools or [])[:10]]
-        tool_names += [t.name for t in self._builtin_tools]
-
-        prompt = INTENT_PROMPT.format(
-            tools=", ".join(tool_names),
-            context=self.context or "(no prior conversation)",
-            query=query,
-        )
-
-        try:
-            raw = self.model.generate(prompt, max_tokens=5, temperature=0.0)
-            answer = raw.strip().upper()
-            logger.info(f"Intent classification: {answer!r}")
-
-            if "ACTION" in answer:
-                return "ACTION"
-            return "DIRECT"
-        except Exception as e:
-            logger.warning(f"Intent classification failed: {e}, defaulting to ACTION")
-            return "ACTION"  # safe default: try tools
-
-    # ------------------------------------------------------------------
-    # Skills — tool-specialized context for SLMs
-    # ------------------------------------------------------------------
-
-    def _build_skill_context(self, query: str) -> str:
-        """
-        Build context combining conversation history + skill-specific prompt.
-
-        Skills give the SLM focused instructions about the API it's calling,
-        e.g., "split owner/repo into separate params" for GitHub.
-        """
-        parts = []
-
-        # 1. Conversation history (from session)
-        if self.context:
-            parts.append(self.context)
-
-        # 2. Skill-specific prompt (auto-detected from tools)
-        skill_key = get_skill_for_query(query, self._mcp_tools or self.tools)
-        if skill_key:
-            skill_ctx = get_skill_context(skill_key)
-            if skill_ctx:
-                parts.append(skill_ctx)
-                logger.info(f"Skill detected: {skill_key}")
-
-        return "\n\n".join(parts) if parts else ""
 
     # ------------------------------------------------------------------
     # Helpers
@@ -599,6 +528,31 @@ class AgentService:
             query, self._builtin_tools, self._mcp_tools
         )
         return Planner(self.model, filtered)
+
+    def _get_planner_with_trace(self, query: str) -> Tuple[Planner, List[BaseTool]]:
+        """Get Planner + record tool filtering in trace."""
+        if self._planner is not None:
+            tools = list(self._planner.tools.values())
+            self._trace.tools_filtered = len(tools)
+            self._trace.tools_selected = [t.name for t in tools[:10]]
+            return self._planner, tools
+
+        filtered = _filter_tools_for_query(
+            query, self._builtin_tools, self._mcp_tools
+        )
+        self._trace.tools_filtered = len(filtered)
+        self._trace.tools_selected = [t.name for t in filtered[:10]]
+        return Planner(self.model, filtered), filtered
+
+    @staticmethod
+    def _summarize_errors(results: Dict[str, str]) -> str:
+        """Summarize error results for trace."""
+        errors = []
+        for k, v in results.items():
+            v_str = str(v)
+            if v_str.startswith("Error"):
+                errors.append(f"{k}: {v_str[:80]}")
+        return "; ".join(errors) if errors else "Empty plan"
 
     def _get_react(
         self, query: str, max_iterations: int = 2,

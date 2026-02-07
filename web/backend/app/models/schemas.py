@@ -22,14 +22,29 @@ class ChatRequest(BaseModel):
     github_token: Optional[str] = Field(None, description="GitHub PAT for MCP")
 
 
+class PipelineTrace(BaseModel):
+    """Trace of the agent pipeline — what happened at each stage."""
+    router_decision: str = ""          # "TOOL" or "DIRECT"
+    router_reason: str = ""            # why the router chose this
+    tools_total: int = 0               # total tools available
+    tools_filtered: int = 0            # tools selected for planner
+    tools_selected: List[str] = Field(default_factory=list)
+    tool_rules: str = ""               # auto-generated rules sent to planner
+    planner_think: str = ""            # model's reasoning before the plan
+    planner_prompt: str = ""           # full prompt sent to model (inspector)
+    fallback_used: bool = False        # did ReAct fallback trigger?
+    fallback_reason: str = ""          # why fallback was needed
+
+
 class ChatResponse(BaseModel):
     """Response from chat endpoint."""
     answer: str
     plan: List[PlanStep] = Field(default_factory=list)
     results: Dict[str, str] = Field(default_factory=dict)
-    strategy: str = "rewoo"  # direct, rewoo, react, rewoo->react
+    strategy: str = "rewoo"  # direct, rewoo, rewoo->react
     slm_calls: int = 0
     requests_remaining: int
+    trace: Optional[PipelineTrace] = None
 
 
 class SessionInfo(BaseModel):
@@ -71,6 +86,7 @@ class ModelInfo(BaseModel):
     display_name: str
     description: str
     params: str = ""
+    badge: str = ""  # "recommended", "best value", "fastest", etc.
 
 
 class MCPServerInfo(BaseModel):

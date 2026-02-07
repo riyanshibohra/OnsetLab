@@ -9,14 +9,16 @@ const DEFAULT_TOOLS: ToolInfo[] = [
   { name: 'UnitConverter', description: 'Unit conversion', enabled_by_default: true, category: 'builtin' },
   { name: 'TextProcessor', description: 'Text operations', enabled_by_default: true, category: 'builtin' },
   { name: 'RandomGenerator', description: 'Random values', enabled_by_default: true, category: 'builtin' },
-  { name: 'CodeExecutor', description: 'Run code in sandbox', enabled_by_default: true, category: 'builtin' },
+  { name: 'CodeExecutor', description: 'Run code in sandbox', enabled_by_default: false, category: 'builtin' },
 ];
 
 const DEFAULT_MODELS: ModelInfo[] = [
-  { id: 'qwen2.5:7b', display_name: 'Qwen 2.5 7B', description: 'Alibaba, best value', params: '7B' },
-  { id: 'qwen3-a3b', display_name: 'Qwen3 A3B', description: 'Alibaba MoE, best tool calling', params: '3B active' },
-  { id: 'mistral:7b', display_name: 'Mistral 7B', description: 'Mistral, reliable instruction following', params: '7B' },
-  { id: 'gemma3:4b', display_name: 'Gemma 3 4B', description: 'Google, function calling + vision', params: '4B' },
+  { id: 'qwen3-a3b', display_name: 'Qwen3 A3B', description: 'Best for tool calling — MoE', params: '3B active', badge: 'recommended' },
+  { id: 'qwen2.5:7b', display_name: 'Qwen 2.5 7B', description: 'Strong all-rounder', params: '7B', badge: 'best value' },
+  { id: 'hermes3:8b', display_name: 'Hermes 3 8B', description: 'Excellent function calling', params: '8B', badge: 'function calling' },
+  { id: 'mistral:7b', display_name: 'Mistral 7B', description: 'Fast, reliable', params: '7B', badge: 'fastest' },
+  { id: 'gemma3:4b', display_name: 'Gemma 3 4B', description: 'Smallest, simple tasks', params: '4B' },
+  { id: 'qwen2.5-coder:7b', display_name: 'Qwen 2.5 Coder 7B', description: 'Optimized for code', params: '7B', badge: 'code' },
 ];
 
 const DEFAULT_MCP_SERVERS: MCPServerInfo[] = [
@@ -48,7 +50,11 @@ function App() {
   const [selectedTools, setSelectedTools] = useState<string[]>(
     DEFAULT_TOOLS.filter(t => t.enabled_by_default).map(t => t.name)
   );
-  const [selectedModel, setSelectedModel] = useState('qwen2.5:7b');
+  const [selectedModel, setSelectedModel] = useState('qwen3-a3b');
+
+  // Pipeline trace expansion state
+  const [expandedTraces, setExpandedTraces] = useState<Set<string>>(new Set());
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
   // MCP state
   const [mcpConnections, setMcpConnections] = useState<Record<string, MCPConnectionState>>({});
@@ -86,7 +92,7 @@ function App() {
         content: response.answer,
         plan: response.plan,
         strategy: response.strategy,
-        skill: response.skill,
+        trace: response.trace,
         timestamp: new Date(),
       };
       
@@ -128,6 +134,25 @@ function App() {
     setSelectedTools(prev => 
       prev.includes(name) ? prev.filter(t => t !== name) : [...prev, name]
     );
+  };
+
+  // Pipeline trace handlers
+  const toggleTrace = (msgId: string) => {
+    setExpandedTraces(prev => {
+      const next = new Set(prev);
+      if (next.has(msgId)) next.delete(msgId);
+      else next.add(msgId);
+      return next;
+    });
+  };
+
+  const toggleSection = (key: string) => {
+    setExpandedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
 
   // MCP handlers
@@ -364,18 +389,43 @@ function App() {
                 {/* Model */}
                 <div className="mb-4">
                   <div className="section-label">Model</div>
-                  <select
-                    value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
-                    className="text-sm"
-                    style={{ padding: '8px 12px' }}
-                  >
+                  <div className="space-y-1">
                     {models.map(m => (
-                      <option key={m.id} value={m.id}>
-                        {m.display_name} ({m.params})
-                      </option>
+                      <button
+                        key={m.id}
+                        onClick={() => setSelectedModel(m.id)}
+                        className="w-full text-left px-3 py-2 rounded text-xs transition-colors cursor-pointer"
+                        style={{
+                          background: selectedModel === m.id ? 'rgba(74, 124, 89, 0.12)' : 'transparent',
+                          border: selectedModel === m.id ? '1px solid var(--success)' : '1px solid transparent',
+                          color: selectedModel === m.id ? 'var(--text-primary)' : 'var(--text-secondary)',
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium" style={{ color: selectedModel === m.id ? 'var(--text-primary)' : 'var(--text-primary)' }}>
+                            {m.display_name}
+                          </span>
+                          <span className="opacity-50">{m.params}</span>
+                          {m.badge && (
+                            <span
+                              className="ml-auto text-[9px] font-mono px-1.5 py-0.5 rounded"
+                              style={{
+                                background: m.badge === 'recommended'
+                                  ? 'rgba(74, 124, 89, 0.2)'
+                                  : 'rgba(255,255,255,0.06)',
+                                color: m.badge === 'recommended'
+                                  ? 'var(--success)'
+                                  : 'var(--text-secondary)',
+                              }}
+                            >
+                              {m.badge}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] mt-0.5 opacity-60">{m.description}</div>
+                      </button>
                     ))}
-                  </select>
+                  </div>
                   <div className="text-[11px] mt-1.5" style={{ color: 'var(--text-secondary)' }}>
                     All FREE via OpenRouter
                   </div>
@@ -468,22 +518,124 @@ function App() {
                           className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                         >
                           <div className={`message ${msg.role === 'user' ? 'message-user' : 'message-assistant'}`}>
-                            {/* Strategy + Skill badges */}
+                            {/* Strategy badge + Pipeline toggle */}
                             {msg.role === 'assistant' && msg.strategy && (
                               <div className="flex items-center gap-2 mb-2 flex-wrap">
                                 <span className="tag tag-accent">{msg.strategy?.toUpperCase()}</span>
-                                {msg.skill && (
-                                  <span
-                                    className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-                                    style={{ background: 'rgba(74, 124, 89, 0.12)', color: 'var(--success)' }}
-                                  >
-                                    {msg.skill}
-                                  </span>
-                                )}
                                 {msg.plan && msg.plan.length > 0 && (
                                   <span className="text-[10px] font-mono" style={{ color: 'var(--text-secondary)' }}>
                                     {msg.plan.length} step{msg.plan.length > 1 ? 's' : ''}
                                   </span>
+                                )}
+                                {msg.trace && (
+                                  <button
+                                    onClick={() => toggleTrace(msg.id)}
+                                    className="text-[10px] font-mono px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                                    style={{
+                                      background: expandedTraces.has(msg.id) ? 'rgba(74, 124, 89, 0.18)' : 'rgba(255,255,255,0.04)',
+                                      color: expandedTraces.has(msg.id) ? 'var(--success)' : 'var(--text-secondary)',
+                                      border: '1px solid var(--border)',
+                                    }}
+                                  >
+                                    {expandedTraces.has(msg.id) ? '▾' : '▸'} Pipeline
+                                  </button>
+                                )}
+                                {msg.trace?.fallback_used && (
+                                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+                                    style={{ background: 'rgba(200, 150, 50, 0.12)', color: '#c89632' }}>
+                                    fallback
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Pipeline Trace Panel */}
+                            {msg.trace && expandedTraces.has(msg.id) && (
+                              <div
+                                className="mb-3 rounded-lg text-xs font-mono overflow-hidden"
+                                style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border)' }}
+                              >
+                                {/* Router */}
+                                <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--border)' }}>
+                                  <span style={{ color: 'var(--text-secondary)' }}>Router: </span>
+                                  <span style={{ color: msg.trace.router_decision === 'REWOO' ? 'var(--accent)' : 'var(--success)' }}>
+                                    {msg.trace.router_decision}
+                                  </span>
+                                  <span style={{ color: 'var(--text-secondary)' }}> — {msg.trace.router_reason}</span>
+                                </div>
+
+                                {/* Tools */}
+                                {msg.trace.tools_filtered > 0 && (
+                                  <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--border)' }}>
+                                    <span style={{ color: 'var(--text-secondary)' }}>Tools: </span>
+                                    <span style={{ color: 'var(--accent)' }}>
+                                      {msg.trace.tools_filtered} of {msg.trace.tools_total} selected
+                                    </span>
+                                    <span style={{ color: 'var(--text-secondary)' }}>
+                                      {' — '}{msg.trace.tools_selected.slice(0, 5).join(', ')}
+                                      {msg.trace.tools_selected.length > 5 ? ` +${msg.trace.tools_selected.length - 5}` : ''}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {/* Reasoning (THINK) */}
+                                {msg.trace.planner_think && (
+                                  <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--border)' }}>
+                                    <span style={{ color: 'var(--text-secondary)' }}>Reasoning: </span>
+                                    <span style={{ color: 'var(--text-primary)' }}>{msg.trace.planner_think}</span>
+                                  </div>
+                                )}
+
+                                {/* Tool Rules (collapsible) */}
+                                {msg.trace.tool_rules && (
+                                  <div style={{ borderBottom: '1px solid var(--border)' }}>
+                                    <button
+                                      onClick={() => toggleSection(`rules-${msg.id}`)}
+                                      className="w-full px-3 py-2 text-left cursor-pointer"
+                                      style={{ color: 'var(--text-secondary)' }}
+                                    >
+                                      {expandedSections.has(`rules-${msg.id}`) ? '▾' : '▸'} Tool Rules ({msg.trace.tool_rules.split('\n').length} rules)
+                                    </button>
+                                    {expandedSections.has(`rules-${msg.id}`) && (
+                                      <pre className="px-3 pb-2 whitespace-pre-wrap break-all" style={{ color: 'var(--text-secondary)', fontSize: '10px' }}>
+                                        {msg.trace.tool_rules}
+                                      </pre>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Execution Plan */}
+                                {msg.plan && msg.plan.length > 0 && (
+                                  <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--border)' }}>
+                                    <span style={{ color: 'var(--text-secondary)' }}>Execution: </span>
+                                    {msg.plan.map(step => (
+                                      <span key={step.id}>
+                                        <span style={{ color: 'var(--text-secondary)' }}>{step.id} </span>
+                                        <span style={{ color: 'var(--accent)' }}>{step.tool}</span>
+                                        <span style={{ color: step.status === 'error' ? 'var(--error)' : 'var(--success)' }}>
+                                          {' '}→ {step.status === 'error' ? 'Error' : 'OK'}
+                                          {step.result ? ` (${step.result.length} chars)` : ''}
+                                        </span>
+                                        {'  '}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Fallback */}
+                                {msg.trace.fallback_used && (
+                                  <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--border)' }}>
+                                    <span style={{ color: '#c89632' }}>Fallback: </span>
+                                    <span style={{ color: 'var(--text-secondary)' }}>{msg.trace.fallback_reason}</span>
+                                  </div>
+                                )}
+
+                                {/* Solver */}
+                                {msg.strategy && msg.strategy !== 'direct' && (
+                                  <div className="px-3 py-2">
+                                    <span style={{ color: 'var(--text-secondary)' }}>Solver: </span>
+                                    <span style={{ color: 'var(--success)' }}>Synthesized from {msg.plan?.length || 0} result{(msg.plan?.length || 0) !== 1 ? 's' : ''}</span>
+                                  </div>
                                 )}
                               </div>
                             )}
@@ -492,8 +644,8 @@ function App() {
                               {renderMarkdown(msg.content)}
                             </p>
                             
-                            {/* Execution Plan */}
-                            {msg.plan && msg.plan.length > 0 && (
+                            {/* Execution Plan (compact, always visible) */}
+                            {msg.plan && msg.plan.length > 0 && !expandedTraces.has(msg.id) && (
                               <div 
                                 className="mt-3 pt-3"
                                 style={{ borderTop: '1px solid var(--border)' }}

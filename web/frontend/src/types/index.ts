@@ -8,6 +8,19 @@ export interface PlanStep {
   status: 'pending' | 'running' | 'done' | 'error';
 }
 
+export interface PipelineTrace {
+  router_decision: string;
+  router_reason: string;
+  tools_total: number;
+  tools_filtered: number;
+  tools_selected: string[];
+  tool_rules: string;
+  planner_think: string;
+  planner_prompt: string;
+  fallback_used: boolean;
+  fallback_reason: string;
+}
+
 export interface ChatResponse {
   answer: string;
   plan: PlanStep[];
@@ -15,7 +28,7 @@ export interface ChatResponse {
   strategy: string;
   slm_calls: number;
   requests_remaining: number;
-  skill?: string;
+  trace?: PipelineTrace;
 }
 
 export interface SessionInfo {
@@ -40,6 +53,7 @@ export interface ModelInfo {
   display_name: string;
   description: string;
   params?: string;
+  badge?: string;
 }
 
 export interface MCPServerInfo {
@@ -73,6 +87,6 @@ export interface Message {
   content: string;
   plan?: PlanStep[];
   strategy?: string;
-  skill?: string;
+  trace?: PipelineTrace;
   timestamp: Date;
 }

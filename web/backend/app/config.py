@@ -33,34 +33,52 @@ class Settings:
     
     # SLMs via OpenRouter — small, open-source, good at tool calling
     MODELS = {
-        "qwen2.5:7b": {
-            "openrouter_id": "qwen/qwen-2.5-7b-instruct",
-            "display_name": "Qwen 2.5 7B",
-            "description": "Alibaba, best value",
-            "params": "7B",
-        },
         "qwen3-a3b": {
             "openrouter_id": "qwen/qwen3-next-80b-a3b-instruct",
             "display_name": "Qwen3 A3B",
-            "description": "Alibaba MoE, best tool calling",
+            "description": "Best for tool calling — MoE, 3B active params",
             "params": "3B active",
+            "badge": "recommended",
+        },
+        "qwen2.5:7b": {
+            "openrouter_id": "qwen/qwen-2.5-7b-instruct",
+            "display_name": "Qwen 2.5 7B",
+            "description": "Strong all-rounder, best value for 7B",
+            "params": "7B",
+            "badge": "best value",
+        },
+        "hermes3:8b": {
+            "openrouter_id": "nousresearch/hermes-3-llama-3.1-8b",
+            "display_name": "Hermes 3 8B",
+            "description": "Excellent function calling, structured output",
+            "params": "8B",
+            "badge": "function calling",
         },
         "mistral:7b": {
             "openrouter_id": "mistralai/mistral-7b-instruct",
             "display_name": "Mistral 7B",
-            "description": "Mistral, reliable instruction following",
+            "description": "Reliable instruction following, fast",
             "params": "7B",
+            "badge": "fastest",
         },
         "gemma3:4b": {
             "openrouter_id": "google/gemma-3-4b-it",
             "display_name": "Gemma 3 4B",
-            "description": "Google, function calling + vision",
+            "description": "Smallest model, good for simple tasks",
             "params": "4B",
+            "badge": "",
+        },
+        "qwen2.5-coder:7b": {
+            "openrouter_id": "qwen/qwen-2.5-coder-7b-instruct",
+            "display_name": "Qwen 2.5 Coder 7B",
+            "description": "Optimized for code + tool use",
+            "params": "7B",
+            "badge": "code",
         },
     }
     
     # Default model for new sessions
-    DEFAULT_MODEL = "qwen2.5:7b"
+    DEFAULT_MODEL = "qwen3-a3b"
     
     # Same models run locally via Ollama
     LOCAL_MODELS_NOTE = "All run locally via Ollama too"
@@ -100,7 +118,7 @@ class Settings:
         {
             "name": "CodeExecutor",
             "description": "Run Python/JS/Bash in sandbox",
-            "enabled_by_default": True,
+            "enabled_by_default": False,
             "category": "builtin",
         },
     ]

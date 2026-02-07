@@ -60,6 +60,7 @@ async def list_models():
             display_name=config["display_name"],
             description=config["description"],
             params=config.get("params", ""),
+            badge=config.get("badge", ""),
         )
         for model_id, config in settings.MODELS.items()
     ]

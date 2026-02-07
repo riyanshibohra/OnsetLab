@@ -5,7 +5,7 @@ import concurrent.futures
 from fastapi import APIRouter, HTTPException, Request, Response
 from typing import Optional
 
-from ..models.schemas import ChatRequest, ChatResponse, PlanStep, RateLimitError
+from ..models.schemas import ChatRequest, ChatResponse, PlanStep, PipelineTrace, RateLimitError
 from ..services.session_store import session_store
 from ..services.agent_service import create_agent
 from ..services.mcp_manager import mcp_manager
@@ -114,6 +114,23 @@ async def chat(
         # Get updated session for remaining count
         session = session_store.get(session.id)
         
+        # Build pipeline trace for UI
+        trace_data = None
+        if result.trace:
+            t = result.trace
+            trace_data = PipelineTrace(
+                router_decision=t.router_decision,
+                router_reason=t.router_reason,
+                tools_total=t.tools_total,
+                tools_filtered=t.tools_filtered,
+                tools_selected=t.tools_selected or [],
+                tool_rules=t.tool_rules,
+                planner_think=t.planner_think,
+                planner_prompt=t.planner_prompt,
+                fallback_used=t.fallback_used,
+                fallback_reason=t.fallback_reason,
+            )
+
         return ChatResponse(
             answer=result.answer,
             plan=plan_steps,
@@ -121,7 +138,7 @@ async def chat(
             strategy=result.strategy,
             slm_calls=result.slm_calls,
             requests_remaining=session.requests_remaining if session else 0,
-            skill=result.skill or "",
+            trace=trace_data,
         )
         
     except ValueError as e:
