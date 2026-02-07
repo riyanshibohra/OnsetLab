@@ -1,0 +1,17 @@
+# OnsetLab Playground Backend
+
+# Web framework
+fastapi>=0.100.0
+uvicorn>=0.22.0
+
+# HTTP client (for together.ai)
+requests>=2.28.0
+
+# Validation
+pydantic>=2.0.0
+
+# YAML for config export
+pyyaml>=6.0
+
+# OnsetLab SDK (from parent)
+# In production, this would be: onsetlab
