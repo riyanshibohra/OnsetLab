@@ -1,15 +1,43 @@
 # OnsetLab
 
-Make your local SLMs do actual work.
+### Tool-calling agents that run on your laptop.
 
-## What
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9+-3776AB.svg?logo=python&logoColor=white)](https://python.org)
+[![PyPI](https://img.shields.io/pypi/v/onsetlab.svg)](https://pypi.org/project/onsetlab/)
 
-Agent framework for small language models (3B parameters) that achieves GPT-4 level tool use on your laptop. Uses REWOO architecture (plan → execute → verify) with ReAct fallback for robustness.
+[Install](#install) · [Quick Start](#quick-start) · [MCP Servers](#mcp-servers) · [Architecture](#architecture)
 
-- **No API keys** - runs entirely on Ollama
-- **No fine-tuning** - works out of the box with any Ollama model
-- **MCP support** - connect to any MCP-compatible server
-- **Package & Deploy** - export as Docker, config, or standalone script
+---
+
+## The Problem
+
+Agent frameworks assume GPT-4. They send every request to an API, cost money per call, and break when the network is down. Small language models can run locally for free — but they can't do tool calling reliably. They hallucinate tool names, mess up parameters, and don't know when to stop.
+
+## The Solution
+
+OnsetLab makes 3B–7B models do real tool calling. A hybrid REWOO/ReAct architecture handles the planning, and the model only has to do what it's good at — one step at a time.
+
+```
+pip install onsetlab → connect Ollama → connect tools → run
+```
+
+No API keys. No fine-tuning. No cloud.
+
+---
+
+## How It Works
+
+| Step | What Happens |
+|:----:|-------------|
+| **1** | Your query hits the **Router** — the model itself decides: do I need tools, or can I answer directly? |
+| **2** | If tools are needed, the **Planner** generates a step-by-step execution plan with explicit reasoning |
+| **3** | The **Verifier** checks the plan for errors before anything runs |
+| **4** | The **Executor** runs each tool call with dependency resolution |
+| **5** | The **Solver** reads all tool outputs and writes a final answer |
+| **6** | If planning failed? **ReAct fallback** kicks in — iterative think → act → observe until solved |
+
+---
 
 ## Install
 
@@ -17,148 +45,148 @@ Agent framework for small language models (3B parameters) that achieves GPT-4 le
 pip install onsetlab
 ```
 
-Requires [Ollama](https://ollama.ai) running locally.
+Requires [Ollama](https://ollama.com) running locally:
+
+```bash
+ollama pull qwen2.5:7b
+```
 
 ## Quick Start
 
 ```python
 from onsetlab import Agent
+from onsetlab.tools import Calculator, DateTime
 
-agent = Agent("phi3.5")
-result = agent.run("What time is it in Tokyo?")
+agent = Agent("qwen2.5:7b", tools=[Calculator(), DateTime()])
+
+result = agent.run("What's 15% tip on $84.50?")
 print(result.answer)
 ```
 
-## Adding Tools
+That's it. The agent routes the query, builds a plan, calls the calculator, and returns the answer.
 
-Choose only the tools you need:
-
-```python
-from onsetlab import Agent
-from onsetlab.tools import Calculator, DateTime, UnitConverter, TextProcessor, RandomGenerator
-
-agent = Agent(
-    model="phi3.5",
-    tools=[Calculator(), DateTime()]
-)
-
-result = agent.run("What's 15% tip on $84.50?")
-print(result.answer)  # "The 15% tip on $84.50 is $12.68"
-```
-
-**Available built-in tools:**
-- `Calculator` - math operations
-- `DateTime` - current time, timezones, date math
-- `UnitConverter` - convert between units
-- `TextProcessor` - word count, search, transform text
-- `RandomGenerator` - random numbers, strings, choices
+---
 
 ## MCP Servers
 
-Connect to external services via Model Context Protocol:
+Connect any [MCP-compatible](https://modelcontextprotocol.io) server — filesystem, GitHub, Slack, search, databases, anything.
 
 ```python
 from onsetlab import Agent, MCPServer
 
-agent = Agent("phi3.5")
+# From the built-in registry
+server = MCPServer.from_registry("filesystem", extra_args=["/path/to/dir"])
 
-# Add filesystem access
-agent.add_mcp_server(MCPServer.from_registry("filesystem", path="/my/project"))
-
-# Add GitHub integration
-agent.add_mcp_server(MCPServer.from_registry("github", token="ghp_..."))
-
-result = agent.run("List all Python files in the project")
-print(result.answer)
-```
-
-**Registry servers:** `filesystem`, `github`, `slack`, `notion`, `google_calendar`, `tavily`
-
-Or configure any MCP server manually:
-
-```python
-server = MCPServer(
-    name="my-server",
-    command="npx",
-    args=["-y", "@some/mcp-server"],
-    env={"API_KEY": "..."}
-)
+agent = Agent("qwen2.5:7b")
 agent.add_mcp_server(server)
+
+result = agent.run("List all Python files in the directory")
+print(result.answer)
+
+agent.disconnect_mcp_servers()
 ```
 
-## Packaging & Deployment
-
-Export your agent for deployment:
+**Any npm MCP server works:**
 
 ```python
-# Export as Docker (includes docker-compose with Ollama)
-agent.export("docker", "./my_agent/")
+# Web search (needs API key)
+server = MCPServer(
+    name="tavily",
+    command="npx",
+    args=["-y", "tavily-mcp@latest"],
+    env={"TAVILY_API_KEY": "..."}
+)
 
-# Export as config file
-agent.export("config", "my_agent.yaml")
-
-# Export as standalone script
-agent.export("binary", "my_agent.py")
+# Fetch web pages (no key needed)
+server = MCPServer(
+    name="fetch",
+    command="npx",
+    args=["-y", "@tokenizin/mcp-npx-fetch"],
+)
 ```
 
-Or via CLI:
+**Built-in registry:** `filesystem` · `github` · `slack` · `notion` · `google_calendar` · `tavily`
 
-```bash
-python -m onsetlab export --format docker --output ./deployment/
-cd deployment && docker-compose up --build
-```
-
-See [docs/PACKAGING.md](docs/PACKAGING.md) for full deployment guide.
-
-## Benchmarking
-
-Compare model performance on tool-calling:
-
-```bash
-# Benchmark single model
-python -m onsetlab benchmark --model phi3.5
-
-# Compare models
-python -m onsetlab benchmark --compare "phi3.5,qwen2.5:3b,llama3.2:3b"
-```
-
-See [specs/BENCHMARKING.md](specs/BENCHMARKING.md) for methodology.
+---
 
 ## Architecture
 
 ```
-Task → Router → Strategy Selection
-                    ↓
-         ┌─────────┼─────────┐
-         ↓         ↓         ↓
-      DIRECT    REWOO     REACT
-         ↓         ↓         ↓
-                   └─────────┘
-                       ↓
-                   Verifier → Solver → Answer
+                        ┌─────────┐
+                        │  Query  │
+                        └────┬────┘
+                             │
+                       ┌─────▼─────┐
+                       │   Router   │  ← model classifies: tools needed?
+                       └─────┬─────┘
+                    ┌────────┼────────┐
+                    ▼                 ▼
+              ┌───────────┐    ┌──────────┐
+              │   DIRECT   │    │   REWOO   │
+              │ (no tools) │    │  Pipeline │
+              └───────────┘    └─────┬─────┘
+                                     │
+                    ┌────────────────┬┴───────────────┐
+                    ▼                ▼                 ▼
+              ┌──────────┐   ┌───────────┐   ┌────────────┐
+              │ Planner   │ → │ Executor  │ → │   Solver   │
+              │ THINK/PLAN│   │ run tools │   │ synthesize │
+              └──────────┘   └───────────┘   └────────────┘
+                    │                                 │
+                    │  plan failed?                    │
+                    ▼                                 ▼
+              ┌──────────────┐                  ┌──────────┐
+              │ ReAct        │ ───────────────→ │  Answer  │
+              │ Fallback     │  think→act→observe└──────────┘
+              └──────────────┘
 ```
 
-1. **Router** - selects optimal strategy (DIRECT/REWOO/REACT)
-2. **Planner** - creates step-by-step execution plan (REWOO)
-3. **Verifier** - validates plan before execution
-4. **Executor** - runs tools with dependency resolution
-5. **Solver** - synthesizes final answer from results
-6. **ReAct fallback** - recovers from planning failures
+**Router** — The model itself decides the strategy. No regex, no keyword matching. The SLM reads the query and available tools, then classifies: `REWOO` (needs tools) or `DIRECT` (answer from knowledge). Trivial greetings are caught before the model is even called.
 
-## Options
+**Planner** — Generates a structured `THINK → PLAN` output. Each plan step specifies a tool, parameters, and dependencies on previous steps. Tool rules are auto-generated from JSON schemas — the model sees exactly what each tool can do.
+
+**Executor** — Resolves dependencies between steps and executes tool calls. If step 2 depends on step 1's output, it substitutes the result automatically.
+
+**ReAct Fallback** — If REWOO planning fails (bad format, wrong tool, missing params), the agent switches to iterative `Thought → Action → Observation` loops. This catches edge cases that structured planning misses.
+
+---
+
+## Built-in Tools
+
+| Tool | What it does |
+|------|-------------|
+| `Calculator` | Math expressions, percentages, sqrt/sin/log |
+| `DateTime` | Current time, timezones, date math, day of week |
+| `UnitConverter` | Length, weight, temperature, volume, speed, data |
+| `TextProcessor` | Word count, find/replace, case transform, patterns |
+| `RandomGenerator` | Random numbers, UUIDs, passwords, dice, coin flips |
+
+## Tested Models
+
+| Model | Size | Notes |
+|-------|------|-------|
+| `qwen2.5:7b` | 7B | Best for tool calling |
+| `qwen2.5:3b` | 3B | Fast, good for simple tasks |
+| `phi3.5` | 3.8B | Solid balance |
+| `llama3.2:3b` | 3B | General purpose |
+
+---
+
+## Configuration
 
 ```python
 agent = Agent(
-    model="phi3.5",           # any Ollama model
-    tools=[...],              # built-in tools
-    mcp_servers=[...],        # MCP servers
-    memory=True,              # conversation memory
-    verify=True,              # pre-execution verification
-    routing=True,             # intelligent strategy selection
-    react_fallback=True,      # fallback on REWOO failure
-    debug=False               # verbose logging
+    model="qwen2.5:7b",       # any Ollama model
+    tools=[...],               # built-in tools
+    memory=True,               # conversation memory
+    verify=True,               # pre-execution plan verification
+    routing=True,              # model-driven strategy selection
+    react_fallback=True,       # fallback on REWOO failure
+    debug=False,               # verbose logging
 )
 ```
+
+---
 
 ## License
 
