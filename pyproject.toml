@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "onsetlab"
-version = "0.1.0"
+version = "0.1.1"
 description = "Build, benchmark, and package local SLM agents. No API keys, no cloud."
 readme = "README.md"
 license = {text = "Apache-2.0"}

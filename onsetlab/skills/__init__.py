@@ -42,7 +42,7 @@ HINTS: Dict[str, str] = {
 # Auto-generated tool rules from schemas
 # ---------------------------------------------------------------------------
 
-def generate_tool_rules(tools, max_tools: int = 12) -> str:
+def generate_tool_rules(tools, max_tools: int = 40, query: str = "") -> str:
     """
     Generate compact tool-calling rules from actual tool schemas.
 
@@ -51,15 +51,24 @@ def generate_tool_rules(tools, max_tools: int = 12) -> str:
     that tells the model exactly what parameters are required, their
     types, and any enum constraints.
 
+    When a ``query`` is provided, tools whose name or description match
+    query keywords are prioritised so the most relevant tools appear
+    first within the ``max_tools`` cap.
+
     Args:
         tools:     List of BaseTool instances (built-in or MCP).
         max_tools: Cap the number of tools to keep the prompt short.
+        query:     Optional user query to prioritise relevant tools.
 
     Returns:
         A multi-line string ready to inject into the Planner prompt.
     """
     if not tools:
         return ""
+
+    # Prioritise tools that match query keywords
+    if query:
+        tools = _prioritise_tools(tools, query)
 
     lines: List[str] = []
 
@@ -105,6 +114,35 @@ def generate_tool_rules(tools, max_tools: int = 12) -> str:
         lines.append(hints)
 
     return "\n".join(lines)
+
+
+def _prioritise_tools(tools, query: str):
+    """
+    Sort tools by relevance to the query.
+
+    Tools whose name or description contains query keywords are placed
+    first.  The rest keep their original order.
+    """
+    import re
+
+    # Extract meaningful keywords (3+ chars, skip stop words)
+    stop = {"the", "and", "for", "are", "but", "not", "you", "all", "can",
+            "has", "her", "was", "one", "our", "out", "what", "with", "how",
+            "this", "that", "from", "they", "been", "have", "will", "does"}
+    words = [w.lower() for w in re.findall(r"[a-zA-Z]{3,}", query)]
+    keywords = [w for w in words if w not in stop]
+
+    if not keywords:
+        return tools
+
+    def _score(tool) -> int:
+        """Higher = more relevant."""
+        text = f"{tool.name} {getattr(tool, 'description', '')}".lower()
+        return sum(1 for kw in keywords if kw in text)
+
+    scored = [(t, _score(t)) for t in tools]
+    scored.sort(key=lambda x: -x[1])
+    return [t for t, _ in scored]
 
 
 def generate_examples(tools, max_examples: int = 3) -> str:

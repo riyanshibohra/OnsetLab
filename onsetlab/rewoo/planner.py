@@ -92,8 +92,8 @@ class Planner:
         Returns:
             PlanResult with ``.steps`` and ``.think``.
         """
-        # Build prompt sections
-        tool_rules = generate_tool_rules(self._tools_list)
+        # Build prompt sections — pass task so relevant tools are prioritised
+        tool_rules = generate_tool_rules(self._tools_list, query=task)
         examples = generate_examples(self._tools_list, max_examples=2)
 
         context_section = ""

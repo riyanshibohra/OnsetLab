@@ -225,13 +225,33 @@ class ReactFallback:
             final_answer = final_answer.split('\n')[0].strip()
             return thought, None, is_final, final_answer
         
+        # Check for task completion signals (model says it's done)
+        completion_patterns = [
+            r'task (?:has been |is )?completed',
+            r'task (?:has been |is )?done',
+            r'no further action',
+            r'no additional (?:action|task)',
+            r'action:\s*none',
+        ]
+        for pattern in completion_patterns:
+            if re.search(pattern, response, re.IGNORECASE):
+                is_final = True
+                # Extract the substantive part of the response as the answer
+                final_answer = re.split(
+                    r'(?:Action:|Since |If there)', response, maxsplit=1
+                )[0].strip()
+                if final_answer:
+                    return thought, None, True, final_answer
+
         # Check for Action
         action_match = re.search(r'Action:\s*(\w+)\s*\(([^)]*)\)', response)
         if action_match:
             tool_name = action_match.group(1)
-            params_str = action_match.group(2)
-            params = self._parse_params(params_str)
-            action = (tool_name, params)
+            # Skip if tool name is "None" / "none" (model signaling no action)
+            if tool_name.lower() != "none":
+                params_str = action_match.group(2)
+                params = self._parse_params(params_str)
+                action = (tool_name, params)
         
         return thought, action, is_final, final_answer
     

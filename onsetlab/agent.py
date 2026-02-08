@@ -131,9 +131,19 @@ class Agent:
         return all_tools
     
     def _get_system_context(self) -> str:
-        """Get system context with current datetime."""
+        """Get system context with current datetime and MCP info."""
         now = datetime.now()
-        return f"Current datetime: {now.strftime('%A, %B %d, %Y at %I:%M %p')}"
+        parts = [f"Current datetime: {now.strftime('%A, %B %d, %Y at %I:%M %p')}"]
+
+        # Include MCP allowed directories so the planner uses correct paths
+        for server in self._mcp_servers:
+            if hasattr(server, '_config') and hasattr(server._config, 'args'):
+                # Extract directory paths from MCP server args
+                dirs = [a for a in server._config.args if a.startswith('/')]
+                if dirs:
+                    parts.append(f"Working directory: {dirs[-1]}")
+
+        return "\n".join(parts)
     
     def _get_context(self) -> Optional[str]:
         """Get full context including system info and conversation history."""
