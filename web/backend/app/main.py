@@ -25,6 +25,8 @@ app = FastAPI(
     title="OnsetLab Playground",
     description="Try OnsetLab agents in your browser",
     version="1.0.0",
+    docs_url="/api/docs",
+    redoc_url=None,
 )
 
 # CORS middleware - allow all origins for development

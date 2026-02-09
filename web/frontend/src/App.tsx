@@ -56,16 +56,24 @@ function App() {
     tools: true,
     mcp: true,
     model: false,
-    export: false,
+    export: true,
   });
 
   const toggleSidebar = (key: string) => {
     setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Pipeline trace expansion state
+  // Pipeline trace expansion state (inline in messages)
   const [expandedTraces, setExpandedTraces] = useState<Set<string>>(new Set());
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+
+  // Pipeline panel state (right side drawer, latest query)
+  const [pipelineTrace, setPipelineTrace] = useState<any>(null);
+  const [pipelinePlan, setPipelinePlan] = useState<any[]>([]);
+  const [pipelineResults, setPipelineResults] = useState<Record<string, string>>({});
+  const [pipelineStrategy, setPipelineStrategy] = useState('');
+  const [pipelineAnswer, setPipelineAnswer] = useState('');
+  const [pipelineOpen, setPipelineOpen] = useState(false);
 
   // MCP state
   const [mcpConnections, setMcpConnections] = useState<Record<string, MCPConnectionState>>({});
@@ -76,8 +84,10 @@ function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 50);
+  }, [messages, isLoading]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading || isRateLimited) return;
@@ -94,8 +104,23 @@ function App() {
     setIsLoading(true);
     setError(null);
 
+    // Reset pipeline panel for new query
+    setPipelineTrace(null);
+    setPipelinePlan([]);
+    setPipelineResults({});
+    setPipelineStrategy('');
+    setPipelineAnswer('');
+
     try {
       const response = await api.chat(input.trim(), selectedTools, selectedModel);
+
+      // Update pipeline drawer
+      setPipelineTrace(response.trace || null);
+      setPipelinePlan(response.plan);
+      setPipelineResults(response.results || {});
+      setPipelineStrategy(response.strategy);
+      setPipelineAnswer(response.answer);
+      setPipelineOpen(true);
       
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
@@ -255,10 +280,11 @@ function App() {
   };
 
   const SUGGESTION_CARDS = [
-    { label: 'Tip Calculator', query: "I'm splitting a $284.50 dinner bill between 4 people with 20% tip. What's each person's share?" },
-    { label: 'Time Zones', query: "What time is it right now, and how many hours until midnight?" },
-    { label: 'Unit Math', query: "A recipe needs 2.5 cups of flour. I only have a 1/3 cup measure. How many scoops?" },
-    { label: 'Date Calc', query: "How many days are between March 15 and December 25 this year?" },
+    { icon: '🧾', label: 'Tip calculator', query: "I'm splitting a $284.50 dinner bill between 4 people with 20% tip. What's each person's share?" },
+    { icon: '📅', label: 'Date math', query: "How many days are between March 15 and December 25 this year?" },
+    { icon: '⚖️', label: 'Unit conversion', query: "A recipe needs 2.5 cups of flour. I only have a 1/3 cup measure. How many scoops?" },
+    { icon: '🔑', label: 'Password gen', query: "Generate a secure 20-character password with uppercase, lowercase, numbers and symbols" },
+    { icon: '🕐', label: 'Time zones', query: "What time is it right now, and how many hours until midnight?" },
   ];
 
   return (
@@ -291,13 +317,13 @@ function App() {
       </nav>
 
       {/* Main Content */}
-      <main className="pt-16 px-6" style={{ height: 'calc(100vh - 0px)', display: 'flex', flexDirection: 'column' }}>
-        <div className="max-w-5xl mx-auto w-full flex-1 flex flex-col" style={{ minHeight: 0 }}>
+      <main className="px-6" style={{ position: 'fixed', top: '56px', bottom: 0, left: 0, right: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className="max-w-5xl mx-auto w-full flex-1 flex flex-col" style={{ minHeight: 0, paddingTop: '12px', paddingBottom: '12px' }}>
           {/* Layout */}
-          <div className="flex gap-6 flex-1" style={{ minHeight: 0, paddingTop: '12px' }}>
+          <div className="flex gap-6 flex-1" style={{ minHeight: 0 }}>
             {/* Sidebar */}
-            <aside className="w-64 shrink-0">
-              <div className="card sticky top-24" style={{ maxHeight: 'calc(100vh - 120px)', overflowY: 'auto', padding: '20px' }}>
+            <aside className="w-64 shrink-0 flex flex-col" style={{ minHeight: 0 }}>
+              <div className="card flex-1" style={{ overflowY: 'auto', padding: '20px' }}>
                 {/* Tools */}
                 <div className="mb-4">
                   <button onClick={() => toggleSidebar('tools')} className="section-label flex items-center justify-between w-full" style={{ cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
@@ -716,7 +742,7 @@ function App() {
                       className="suggestion-pill"
                       onClick={() => { setInput(card.query); }}
                     >
-                      {card.label}
+                      <span style={{ fontSize: '12px' }}>{card.icon}</span> {card.label}
                     </button>
                   ))}
                 </div>
@@ -746,9 +772,144 @@ function App() {
                 </div>
               </div>
             </div>
+
           </div>
         </div>
       </main>
+
+      {/* Pipeline Toggle Button */}
+      {pipelineTrace && !pipelineOpen && (
+        <button className="pipeline-toggle-btn" onClick={() => setPipelineOpen(true)}>
+          ⚡ Pipeline
+        </button>
+      )}
+
+      {/* Pipeline Drawer */}
+      {pipelineOpen && (
+        <>
+          <div className="pipeline-drawer-backdrop" onClick={() => setPipelineOpen(false)} />
+          <div className="pipeline-drawer">
+            <div className="pipeline-drawer-header">
+              <span className="pipeline-drawer-title">Pipeline</span>
+              <button className="pipeline-drawer-close" onClick={() => setPipelineOpen(false)}>×</button>
+            </div>
+            <div className="pipeline-body">
+              <div className="pipeline-timeline">
+                {/* Router */}
+                <div className="pipeline-step" data-type="router" style={{ animationDelay: '0ms' }}>
+                  <div className={`pipeline-dot ${pipelineTrace ? 'done' : 'active'}`} />
+                  <div className="pipeline-step-header">
+                    <span className="pipeline-step-label">Router</span>
+                    <span className={`pipeline-step-status ${pipelineTrace ? 'done' : 'active'}`}>
+                      {pipelineTrace ? '✓' : '● routing'}
+                    </span>
+                  </div>
+                  {pipelineTrace && (
+                    <div className="pipeline-detail">
+                      <div className="pipeline-detail-label">Decision</div>
+                      {pipelineTrace.router_decision}{pipelineTrace.router_reason ? ` — ${pipelineTrace.router_reason}` : ''}
+                      {pipelineTrace.tools_selected && pipelineTrace.tools_selected.length > 0 && (
+                        <>
+                          {'\n'}
+                          <div className="pipeline-detail-label">Tools</div>
+                          {pipelineTrace.tools_selected.join(', ')}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Planner */}
+                {pipelineStrategy !== 'direct' && (
+                  <div className="pipeline-step" data-type="planner" style={{ animationDelay: '80ms' }}>
+                    <div className={`pipeline-dot ${pipelinePlan.length > 0 ? 'done' : 'waiting'}`} />
+                    <div className="pipeline-step-header">
+                      <span className="pipeline-step-label">Planner</span>
+                      <span className={`pipeline-step-status ${pipelinePlan.length > 0 ? 'done' : ''}`}>
+                        {pipelinePlan.length > 0 ? `✓ ${pipelinePlan.length} steps` : ''}
+                      </span>
+                    </div>
+                    {(pipelineTrace?.planner_think || pipelinePlan.length > 0) && (
+                      <div className="pipeline-detail">
+                        {pipelineTrace?.planner_think && (
+                          <>
+                            <div className="pipeline-detail-label">Reasoning</div>
+                            {pipelineTrace.planner_think}
+                          </>
+                        )}
+                        {pipelinePlan.length > 0 && (
+                          <>
+                            {pipelineTrace?.planner_think && '\n'}
+                            <div className="pipeline-detail-label">Plan</div>
+                            {pipelinePlan.map((s: any) => `${s.id} = ${s.tool}(${Object.entries(s.params || {}).map(([k,v]) => `${k}="${v}"`).join(', ')})`).join('\n')}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Executor */}
+                {pipelineStrategy !== 'direct' && (
+                  <div className="pipeline-step" data-type="executor" style={{ animationDelay: '160ms' }}>
+                    <div className={`pipeline-dot ${Object.keys(pipelineResults).length > 0 ? 'done' : 'waiting'}`} />
+                    <div className="pipeline-step-header">
+                      <span className="pipeline-step-label">Executor</span>
+                      <span className={`pipeline-step-status ${Object.keys(pipelineResults).length > 0 ? 'done' : ''}`}>
+                        {Object.keys(pipelineResults).length > 0 ? `✓ ${Object.keys(pipelineResults).length} calls` : ''}
+                      </span>
+                    </div>
+                    {Object.keys(pipelineResults).length > 0 && (
+                      <div className="pipeline-detail">
+                        {pipelinePlan.map((step: any) => (
+                          <div key={step.id} className="pipeline-tool-call">
+                            <div className="pipeline-tool-name">{step.id}: {step.tool}</div>
+                            {pipelineResults[step.id] && (
+                              <div className="pipeline-tool-result">
+                                → {pipelineResults[step.id].length > 150 ? pipelineResults[step.id].slice(0, 150) + '…' : pipelineResults[step.id]}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ReAct Fallback */}
+                {pipelineTrace?.fallback_used && (
+                  <div className="pipeline-step" data-type="react" style={{ animationDelay: '240ms' }}>
+                    <div className={`pipeline-dot ${pipelineAnswer ? 'done' : 'active'}`} />
+                    <div className="pipeline-step-header">
+                      <span className="pipeline-step-label">ReAct Fallback</span>
+                      <span className="pipeline-step-status" style={{ color: '#E06B5E' }}>fallback</span>
+                    </div>
+                    <div className="pipeline-detail">
+                      {pipelineTrace.fallback_reason || 'REWOO plan failed, switching to iterative reasoning'}
+                    </div>
+                  </div>
+                )}
+
+                {/* Solver */}
+                <div className="pipeline-step" data-type="solver" style={{ animationDelay: pipelineStrategy === 'direct' ? '80ms' : '240ms' }}>
+                  <div className={`pipeline-dot ${pipelineAnswer ? 'done' : 'waiting'}`} />
+                  <div className="pipeline-step-header">
+                    <span className="pipeline-step-label">{pipelineStrategy === 'direct' ? 'Answer' : 'Solver'}</span>
+                    <span className={`pipeline-step-status ${pipelineAnswer ? 'done' : ''}`}>
+                      {pipelineAnswer ? '✓' : ''}
+                    </span>
+                  </div>
+                  {pipelineAnswer && (
+                    <div className="pipeline-detail">
+                      {pipelineAnswer.length > 300 ? pipelineAnswer.slice(0, 300) + '…' : pipelineAnswer}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Token Modal */}
       {tokenModal && (

@@ -1,5 +1,6 @@
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { GitBranch, Plug, RefreshCcw, Cpu, ArrowRight } from 'lucide-react'
+import { GitBranch, Plug, RefreshCcw, Cpu, ArrowRight, Copy, Check, BookOpen, Layers, Zap, CheckCircle } from 'lucide-react'
 
 const FadeIn = ({ children, delay = 0, className = '' }) => (
   <motion.div
@@ -22,51 +23,123 @@ const ASCII_ART = `
  ╚═════╝ ╚═╝  ╚═══╝╚══════╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═════╝ 
 `
 
-const PIPELINE_STEPS = [
-  {
-    label: 'Plan',
+const CODE_LINES = [
+  { tokens: [{ text: 'from ', cls: '' }, { text: 'onsetlab', cls: 't-str' }, { text: ' import ', cls: '' }, { text: 'Agent', cls: 't-kw' }] },
+  { tokens: [] },
+  { tokens: [{ text: 'agent = ', cls: '' }, { text: 'Agent', cls: 't-kw' }, { text: '(', cls: '' }, { text: '"qwen3-1.7b"', cls: 't-str' }, { text: ', tools=[', cls: '' }, { text: '"Calculator"', cls: 't-str' }, { text: ', ', cls: '' }, { text: '"DateTime"', cls: 't-str' }, { text: '])', cls: '' }] },
+  { tokens: [{ text: 'agent.', cls: '' }, { text: 'connect_mcp', cls: 't-kw' }, { text: '(', cls: '' }, { text: '"github"', cls: 't-str' }, { text: ', token=', cls: '' }, { text: '"..."', cls: 't-str' }, { text: ')', cls: '' }] },
+  { tokens: [{ text: 'result = agent.', cls: '' }, { text: 'run', cls: 't-kw' }, { text: '(', cls: '' }, { text: '"Summarize my team\'s PRs this week"', cls: 't-str' }, { text: ')', cls: '' }] },
+]
+
+function CodeSnippet() {
+  return (
+    <div className="code-block">
+      <div className="code-block-header">
+        <span className="code-block-dot" />
+        <span className="code-block-dot" />
+        <span className="code-block-dot" />
+        <span className="code-block-lang">python</span>
+      </div>
+      <pre className="code-block-body">
+        {CODE_LINES.map((line, i) => (
+          <div key={i} className="code-line">
+            <span className="code-lineno">{i + 1}</span>
+            {line.tokens.length === 0 ? '\n' : line.tokens.map((t, j) => (
+              <span key={j} className={t.cls}>{t.text}</span>
+            ))}
+          </div>
+        ))}
+      </pre>
+    </div>
+  )
+}
+
+function PipInstall() {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = () => {
+    navigator.clipboard.writeText('pip install onsetlab')
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+  return (
+    <div className="pip-install">
+      <code><span style={{ opacity: 0.35 }}>$</span> pip install onsetlab</code>
+      <button onClick={handleCopy} className="pip-copy-btn" title="Copy to clipboard">
+        {copied ? <Check size={14} /> : <Copy size={14} />}
+      </button>
+    </div>
+  )
+}
+
+const FLOW_NODES = [
+  { 
+    id: 'planner', 
+    icon: Layers,
+    label: 'Plans execution', 
+    desc: 'Get Tokyo weather, then calculate hours until 6:30pm JST',
     accent: '#7aa2f7',
-    content: 'Sum all invoice totals and hours, compute average hourly rate, then find days remaining in the quarter.',
+    type: 'core' 
   },
-  {
-    label: 'Tool Call',
+  { 
+    id: 'tool1', 
+    icon: Zap,
+    label: 'Weather.get("Tokyo")', 
     accent: 'var(--accent)',
-    content: 'Calculator.divide(5235, 77)',
-    mono: true,
+    type: 'tool',
+    mono: true 
   },
-  {
-    label: 'Tool Call',
+  { 
+    id: 'tool2', 
+    icon: Zap,
+    label: 'DateTime.hours_until("18:30 JST")', 
     accent: 'var(--accent)',
-    content: 'DateTime.days_until("2024-03-31")',
-    mono: true,
+    type: 'tool',
+    mono: true 
   },
-  {
-    label: 'Result',
+  { 
+    id: 'fallback', 
+    icon: RefreshCcw,
+    label: 'Auto-corrects on error', 
+    desc: 'Wrong timezone? Bad format? Retries with fixes',
+    accent: '#e0af68',
+    type: 'fallback' 
+  },
+  { 
+    id: 'answer', 
+    icon: CheckCircle,
+    label: 'Clear skies, 72°F. Flight in 4 hours.',
     accent: '#9ece6a',
-    content: 'Your average rate is $67.99/hr across 77 hours. 74 days left in Q1.',
+    type: 'end' 
   },
 ]
 
-function PipelineDemo() {
+function ArchitectureFlow() {
   return (
-    <div className="pipeline-demo">
-      <div className="pipeline-header">
-        <span className="pipeline-prompt">"I have 3 invoices: $2,400 for 40hrs, $1,875 for 25hrs, $960 for 12hrs. What's my average hourly rate and how many days until end of quarter?"</span>
+    <div className="arch-flow">
+      <div className="arch-flow-question">
+        "What's the weather in Tokyo and how long until my flight at 6:30pm?"
       </div>
-      {PIPELINE_STEPS.map((step, i) => (
+      {FLOW_NODES.map((node, i) => (
         <motion.div
-          key={`${step.label}-${i}`}
-          className="pipeline-step"
-          style={{ borderLeftColor: step.accent }}
-          initial={{ opacity: 0, x: 12 }}
+          key={node.id}
+          initial={{ opacity: 0, x: 16 }}
           whileInView={{ opacity: 1, x: 0 }}
           viewport={{ once: true }}
-          transition={{ duration: 0.4, delay: 0.2 + i * 0.15 }}
+          transition={{ duration: 0.35, delay: 0.12 + i * 0.08 }}
         >
-          <span className="pipeline-label" style={{ color: step.accent }}>{step.label}</span>
-          <p className={step.mono ? 'mono' : ''} style={{ color: step.mono ? 'var(--text)' : 'var(--text-secondary)' }}>
-            {step.content}
-          </p>
+          <div className="arch-connector"><div className="arch-line" /></div>
+          <div className={`arch-node ${node.type === 'fallback' ? 'arch-node-fallback' : ''}`} style={{ borderLeftColor: node.accent }}>
+            <div className="arch-node-header">
+              <node.icon size={14} style={{ color: node.accent }} strokeWidth={2.5} />
+              <span className="arch-node-label" style={{ color: node.accent }}>
+                {node.type === 'tool' ? 'Tool Call' : node.type === 'core' ? 'REWOO Planner' : node.type === 'fallback' ? 'ReAct Fallback' : 'Answer'}
+              </span>
+            </div>
+            <p className={node.mono ? 'mono' : ''}>
+              {node.label}
+            </p>
+            {node.desc && <p className="arch-node-desc">{node.desc}</p>}
+          </div>
         </motion.div>
       ))}
     </div>
@@ -81,8 +154,7 @@ function Nav() {
           onsetlab
         </a>
         <div className="flex items-center gap-6 text-sm">
-          <a href="#features" style={{ color: 'var(--text-secondary)' }} className="hover:opacity-70 transition">Features</a>
-          <a href="#start" style={{ color: 'var(--text-secondary)' }} className="hover:opacity-70 transition">Get Started</a>
+          <a href="/docs" style={{ color: 'var(--text-secondary)' }} className="hover:opacity-70 transition">Docs</a>
           <a href="/playground" className="btn btn-primary py-2 px-4 text-sm">Playground</a>
           <a href="https://github.com/riyanshibohra/OnsetLab" className="btn btn-secondary py-2 px-4 text-sm" target="_blank" rel="noopener noreferrer">GitHub</a>
         </div>
@@ -102,7 +174,7 @@ function Hero() {
           <FadeIn>
             <pre
               className="leading-tight mb-6 inline-block"
-              style={{ color: 'var(--accent)', fontSize: '8px', opacity: 0.35 }}
+              style={{ color: 'var(--accent)', fontSize: '8px', opacity: 0.9 }}
               aria-hidden="true"
             >{ASCII_ART}</pre>
           </FadeIn>
@@ -124,21 +196,26 @@ function Hero() {
           </FadeIn>
         </div>
 
-        {/* Split: CTA left, pipeline right */}
+        {/* Split: code left, architecture right */}
         <div className="hero-split">
           <div className="hero-split-left">
             <FadeIn delay={0.2}>
-              <div className="hero-actions-col">
-                <a href="/playground" className="btn btn-primary">Try in Browser</a>
-                <a href="https://github.com/riyanshibohra/OnsetLab" className="btn btn-secondary" target="_blank" rel="noopener noreferrer">GitHub</a>
-                <div className="code-inline">
-                  <span style={{ opacity: 0.35 }}>$</span> pip install onsetlab
-                </div>
-              </div>
+              <CodeSnippet />
+            </FadeIn>
+
+            <FadeIn delay={0.25}>
+              <PipInstall />
             </FadeIn>
 
             <FadeIn delay={0.3}>
-              <p className="text-xs mt-8" style={{ color: 'var(--text-secondary)', opacity: 0.6 }}>
+              <a href="/docs" className="btn btn-secondary" style={{ gap: '6px' }}>
+                <BookOpen size={15} />
+                Read the Docs
+              </a>
+            </FadeIn>
+
+            <FadeIn delay={0.35}>
+              <p className="text-xs mt-4" style={{ color: 'var(--text-secondary)', opacity: 0.6 }}>
                 Works with Qwen, Mistral, Hermes, Gemma
                 <br />
                 and any Ollama-compatible model.
@@ -147,7 +224,7 @@ function Hero() {
           </div>
 
           <FadeIn delay={0.2} className="hero-split-right">
-            <PipelineDemo />
+            <ArchitectureFlow />
           </FadeIn>
         </div>
       </div>
@@ -256,7 +333,7 @@ function GetStarted() {
         <FadeIn delay={0.2}>
           <div className="flex gap-3 justify-center mt-14">
             <a href="/playground" className="btn btn-primary">Try the Playground</a>
-            <a href="https://github.com/riyanshibohra/OnsetLab#readme" className="btn btn-secondary" target="_blank" rel="noopener noreferrer">Documentation</a>
+            <a href="/docs" className="btn btn-secondary">Documentation</a>
           </div>
         </FadeIn>
       </div>
@@ -282,6 +359,10 @@ function Footer() {
 }
 
 function App() {
+  useEffect(() => {
+    document.title = 'OnsetLab | Tool-calling AI agents that run locally'
+  }, [])
+
   return (
     <div>
       <Nav />
