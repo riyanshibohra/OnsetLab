@@ -51,7 +51,7 @@ function PlanViewer({
       </div>
 
       <div className="space-y-2">
-        {plan.map((step, idx) => (
+        {plan.map((step) => (
           <div
             key={step.id}
             className="flex items-start gap-2 text-sm"

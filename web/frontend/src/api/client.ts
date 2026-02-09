@@ -2,7 +2,7 @@
 
 import type { ChatResponse, SessionInfo, ToolInfo, ModelInfo, MCPServerInfo, MCPConnectResponse, MCPStatusResponse } from '../types';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 class ApiClient {
   private baseUrl: string;

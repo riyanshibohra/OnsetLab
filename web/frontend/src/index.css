@@ -3,11 +3,11 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #e4e0d9;
-  --surface: #edeae4;
-  --border: #d4d0c8;
+  --bg: #dfe3e8;
+  --surface: #f0f2f5;
+  --border: #c8ced6;
   --text: #2c2c2c;
-  --text-secondary: #666660;
+  --text-secondary: #5c6370;
   --accent: #4a6670;
   --accent-hover: #3a545d;
   --success: #4a7c59;
@@ -305,4 +305,47 @@ input[type="checkbox"]:checked::after {
 
 .font-mono {
   font-family: 'JetBrains Mono', monospace;
+}
+
+/* Sidebar button hover */
+.sidebar-btn {
+  transition: all 0.2s ease;
+}
+
+.sidebar-btn:hover {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: white !important;
+}
+
+/* Suggestion pills */
+.suggestion-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.suggestion-pill:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Dot grid background */
+.dot-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, var(--border) 0.8px, transparent 0.8px);
+  background-size: 28px 28px;
+  opacity: 0.4;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse at center, black 20%, transparent 65%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 20%, transparent 65%);
 }

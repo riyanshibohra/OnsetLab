@@ -9,7 +9,6 @@ const DEFAULT_TOOLS: ToolInfo[] = [
   { name: 'UnitConverter', description: 'Unit conversion', enabled_by_default: true, category: 'builtin' },
   { name: 'TextProcessor', description: 'Text operations', enabled_by_default: true, category: 'builtin' },
   { name: 'RandomGenerator', description: 'Random values', enabled_by_default: true, category: 'builtin' },
-  { name: 'CodeExecutor', description: 'Run code in sandbox', enabled_by_default: false, category: 'builtin' },
 ];
 
 const DEFAULT_MODELS: ModelInfo[] = [
@@ -243,11 +242,11 @@ function App() {
     return parts.length > 0 ? parts : text;
   };
 
-  const suggestions = [
-    "What's 18% tip on $127.50?",
-    "What day was July 4th, 2000?",
-    "Convert 5 miles to kilometers",
-    "Run: print the first 10 fibonacci numbers",
+  const SUGGESTION_CARDS = [
+    { label: 'Tip Calculator', query: "I'm splitting a $284.50 dinner bill between 4 people with 20% tip. What's each person's share?" },
+    { label: 'Time Zones', query: "What time is it right now, and how many hours until midnight?" },
+    { label: 'Unit Math', query: "A recipe needs 2.5 cups of flour. I only have a 1/3 cup measure. How many scoops?" },
+    { label: 'Date Calc', query: "How many days are between March 15 and December 25 this year?" },
   ];
 
   return (
@@ -255,7 +254,7 @@ function App() {
       {/* Navigation */}
       <nav 
         className="fixed top-0 left-0 right-0 z-50 px-6 py-4"
-        style={{ background: 'rgba(228, 224, 217, 0.9)', backdropFilter: 'blur(20px)' }}
+        style={{ background: 'rgba(223, 227, 232, 0.9)', backdropFilter: 'blur(20px)' }}
       >
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <a href="/" className="flex items-center gap-2">
@@ -372,8 +371,8 @@ function App() {
                             <button
                               onClick={() => openTokenModal(server)}
                               disabled={isConnecting}
-                              className="text-[10px] px-2 py-0.5 rounded shrink-0"
-                              style={{ color: 'var(--accent)', border: '1px solid var(--accent)', background: 'transparent', opacity: isConnecting ? 0.5 : 1 }}
+                              className="text-[10px] px-2 py-0.5 rounded shrink-0 sidebar-btn"
+                              style={{ color: 'var(--accent)', border: '1px solid var(--accent)', background: 'transparent', opacity: isConnecting ? 0.5 : 1, cursor: 'pointer' }}
                             >
                               {isConnecting ? '...' : 'Connect'}
                             </button>
@@ -396,9 +395,9 @@ function App() {
                         onClick={() => setSelectedModel(m.id)}
                         className="w-full text-left px-3 py-2 rounded text-xs transition-colors cursor-pointer"
                         style={{
-                          background: selectedModel === m.id ? 'rgba(74, 124, 89, 0.12)' : 'transparent',
-                          border: selectedModel === m.id ? '1px solid var(--success)' : '1px solid transparent',
-                          color: selectedModel === m.id ? 'var(--text-primary)' : 'var(--text-secondary)',
+                          background: selectedModel === m.id ? 'rgba(74, 102, 112, 0.12)' : 'transparent',
+                          border: selectedModel === m.id ? '1px solid var(--accent)' : '1px solid transparent',
+                          color: selectedModel === m.id ? 'var(--text)' : 'var(--text-secondary)',
                         }}
                       >
                         <div className="flex items-center gap-2">
@@ -437,30 +436,30 @@ function App() {
                   <div className="flex flex-wrap gap-1">
                     <button
                       onClick={() => handleExport('config')}
-                      className="text-xs py-1.5 px-3 rounded"
-                      style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+                      className="text-xs py-1.5 px-3 rounded sidebar-btn"
+                      style={{ background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
                     >
                       YAML
                     </button>
                     <button
                       onClick={() => handleExport('docker')}
-                      className="text-xs py-1.5 px-3 rounded"
-                      style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+                      className="text-xs py-1.5 px-3 rounded sidebar-btn"
+                      style={{ background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
                     >
                       Docker
                     </button>
                     <button
                       onClick={() => handleExport('docker-vllm')}
-                      className="text-xs py-1.5 px-3 rounded"
-                      style={{ background: 'rgba(74, 124, 89, 0.08)', border: '1px solid var(--success)', color: 'var(--success)' }}
+                      className="text-xs py-1.5 px-3 rounded sidebar-btn"
+                      style={{ background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
                       title="GPU-accelerated (5-10x faster)"
                     >
                       vLLM
                     </button>
                     <button
                       onClick={() => handleExport('binary')}
-                      className="text-xs py-1.5 px-3 rounded"
-                      style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+                      className="text-xs py-1.5 px-3 rounded sidebar-btn"
+                      style={{ background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
                     >
                       Script
                     </button>
@@ -479,36 +478,25 @@ function App() {
                 <div className="flex-1 overflow-y-auto p-6">
                   {messages.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-center py-12">
-                      <pre 
-                        className="text-[6px] leading-tight mb-6 opacity-30"
-                        style={{ color: 'var(--accent)' }}
+                      <pre
+                        className="leading-tight mb-4"
+                        style={{ color: 'var(--accent)', fontSize: '6px', opacity: 0.35 }}
                       >
 {`
- ██████╗ ███╗   ██╗███████╗███████╗████████╗
-██╔═══██╗████╗  ██║██╔════╝██╔════╝╚══██╔══╝
-██║   ██║██╔██╗ ██║███████╗█████╗     ██║   
-██║   ██║██║╚██╗██║╚════██║██╔══╝     ██║   
-╚██████╔╝██║ ╚████║███████║███████╗   ██║   
- ╚═════╝ ╚═╝  ╚═══╝╚══════╝╚══════╝   ╚═╝   
+ ██████╗ ███╗   ██╗███████╗███████╗████████╗██╗      █████╗ ██████╗ 
+██╔═══██╗████╗  ██║██╔════╝██╔════╝╚══██╔══╝██║     ██╔══██╗██╔══██╗
+██║   ██║██╔██╗ ██║███████╗█████╗     ██║   ██║     ███████║██████╔╝
+██║   ██║██║╚██╗██║╚════██║██╔══╝     ██║   ██║     ██╔══██║██╔══██╗
+╚██████╔╝██║ ╚████║███████║███████╗   ██║   ███████╗██║  ██║██████╔╝
+ ╚═════╝ ╚═╝  ╚═══╝╚══════╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═════╝ 
 `}
                       </pre>
-                      <p className="text-lg font-medium mb-2" style={{ color: 'var(--text)' }}>
-                        Ask a question
+                      <p className="text-base font-medium mb-1" style={{ color: 'var(--text)' }}>
+                        What do you want to solve?
                       </p>
-                      <p className="text-sm mb-8 max-w-sm" style={{ color: 'var(--text-secondary)' }}>
-                        The agent will plan, use tools, and synthesize an answer.
+                      <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                        Pick a suggestion below or type your own question.
                       </p>
-                      <div className="flex flex-wrap gap-2 justify-center">
-                        {suggestions.map((q, i) => (
-                          <button
-                            key={i}
-                            onClick={() => setInput(q)}
-                            className="btn btn-secondary btn-sm"
-                          >
-                            {q}
-                          </button>
-                        ))}
-                      </div>
                     </div>
                   ) : (
                     <div className="space-y-4">
@@ -704,8 +692,21 @@ function App() {
                   </div>
                 )}
 
+                {/* Suggestion pills */}
+                <div style={{ padding: '8px 24px 0', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {SUGGESTION_CARDS.map((card) => (
+                    <button
+                      key={card.label}
+                      className="suggestion-pill"
+                      onClick={() => { setInput(card.query); }}
+                    >
+                      {card.label}
+                    </button>
+                  ))}
+                </div>
+
                 {/* Input */}
-                <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)' }}>
+                <div style={{ padding: '12px 24px 16px', borderTop: 'none' }}>
                   <form
                     onSubmit={(e) => { e.preventDefault(); handleSend(); }}
                     className="flex gap-3"
@@ -763,7 +764,7 @@ function App() {
                 placeholder={tokenModal.token_hint || 'Paste token...'}
                 onKeyDown={e => { if (e.key === 'Enter') handleMCPConnect(); }}
                 autoFocus
-                style={{ width: '100%' }}
+                style={{ width: '100%', padding: '12px 16px' }}
               />
             </div>
 

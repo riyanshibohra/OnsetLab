@@ -3,11 +3,11 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #e4e0d9;
-  --surface: #edeae4;
-  --border: #d4d0c8;
+  --bg: #dfe3e8;
+  --surface: #f0f2f5;
+  --border: #c8ced6;
   --text: #2c2c2c;
-  --text-secondary: #666660;
+  --text-secondary: #5c6370;
   --accent: #4a6670;
 }
 
@@ -42,12 +42,13 @@ code, pre, .mono {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 32px;
+  padding: 12px 28px;
   font-size: 14px;
   font-weight: 500;
   border-radius: 8px;
   transition: all 0.2s ease;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .btn-primary {
@@ -69,26 +70,221 @@ code, pre, .mono {
   border-color: var(--text-secondary);
 }
 
-/* Code block */
-.code-block {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 28px;
-  overflow-x: auto;
+/* Hero split: CTA left, pipeline right */
+.hero-split {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  align-items: center;
 }
 
-/* Card */
-.card {
+@media (min-width: 768px) {
+  .hero-split {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 40px;
+    align-items: start;
+  }
+}
+
+.hero-split-left {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.hero-split-right {
+  width: 100%;
+}
+
+@media (min-width: 768px) {
+  .hero-split-left {
+    align-items: center;
+    text-align: center;
+    padding-top: 8px;
+    max-width: 320px;
+    margin: 0 auto;
+  }
+}
+
+/* CTA column — buttons stacked with pip install */
+.hero-actions-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.hero-actions-col .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.hero-actions-col .code-inline {
+  width: 100%;
+  justify-content: center;
+}
+
+/* Inline code snippet — same height as buttons */
+.code-inline {
+  display: inline-flex;
+  align-items: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 20px;
+  height: 46px;
+}
+
+/* Hero dot grid */
+.hero-section {
+  background: radial-gradient(ellipse at center, rgba(240, 242, 245, 0.6) 0%, transparent 60%);
+}
+
+.hero-dot-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, var(--border) 0.8px, transparent 0.8px);
+  background-size: 28px 28px;
+  opacity: 0.5;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse at center, black 20%, transparent 65%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 20%, transparent 65%);
+}
+
+/* Pipeline demo */
+.pipeline-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pipeline-header {
+  padding: 14px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 2px;
+}
+
+.pipeline-prompt {
+  font-size: 13px;
+  font-style: italic;
+  color: var(--text);
+}
+
+.pipeline-step {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 14px 18px;
+}
+
+.pipeline-label {
+  display: block;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+
+.pipeline-step p {
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.pipeline-step p.mono {
+  font-size: 11.5px;
+}
+
+/* Feature card v2 — with icon */
+.feature-card-v2 {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 32px;
+  padding: 24px;
   transition: all 0.25s ease;
 }
 
-.card:hover {
+.feature-card-v2:hover {
   border-color: var(--accent);
+}
+
+.feature-icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Journey track — horizontal steps with arrows */
+.journey-track {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.journey-step {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 20px;
+  text-align: center;
+  flex: 1;
+  min-width: 140px;
+  max-width: 180px;
+  transition: all 0.25s ease;
+}
+
+.journey-step:hover {
+  border-color: var(--accent);
+}
+
+.journey-arrow {
+  flex-shrink: 0;
+  margin-top: 36px;
+}
+
+@media (max-width: 767px) {
+  .journey-arrow {
+    display: none;
+  }
+  .journey-track {
+    flex-direction: column;
+    align-items: center;
+  }
+  .journey-step {
+    max-width: 260px;
+  }
+}
+
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 10px;
 }
 
 /* Divider */

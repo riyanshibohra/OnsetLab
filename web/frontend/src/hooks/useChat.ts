@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { api, ApiError } from '../api/client';
-import type { Message, PlanStep } from '../types';
+import type { Message } from '../types';
 
 interface UseChatReturn {
   messages: Message[];
