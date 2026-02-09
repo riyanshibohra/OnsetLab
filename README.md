@@ -67,28 +67,28 @@ The agent routes the query, builds an execution plan, calls the calculator, and 
 
 ```mermaid
 flowchart TD
-    Q["🔍 Query"] --> R["Router (model-driven)"]
+    Q["Query"] --> R["Router"]
 
-    R -->|"no tools needed"| D["DIRECT - answer from model knowledge"]
-    R -->|"tools needed"| P["Planner - THINK → PLAN"]
+    R -->|"tools needed"| P["Planner"]
+    R -->|"no tools"| D["Direct Answer"]
 
-    P --> E["Executor - run tools, resolve dependencies"]
-    E --> S["Solver - synthesize final answer"]
+    P --> E["Executor"]
+    E --> S["Solver"]
 
-    P -. "plan fails" .-> RE["ReAct Fallback - think → act → observe"]
+    P -. "plan fails" .-> RE["ReAct Fallback"]
 
-    D --> A["✅ Answer"]
+    D --> A["Answer"]
     S --> A
     RE --> A
 
-    style Q fill:#1a1a2e,stroke:#e94560,color:#fff
-    style R fill:#16213e,stroke:#0f3460,color:#fff
-    style D fill:#0f3460,stroke:#533483,color:#fff
-    style P fill:#0f3460,stroke:#533483,color:#fff
-    style E fill:#0f3460,stroke:#533483,color:#fff
-    style S fill:#0f3460,stroke:#533483,color:#fff
-    style RE fill:#533483,stroke:#e94560,color:#fff
-    style A fill:#1a1a2e,stroke:#e94560,color:#fff
+    style Q fill:#4a6670,stroke:#4a6670,color:#fff
+    style R fill:#fff,stroke:#4a6670,color:#2d3b40
+    style P fill:#e8f0fe,stroke:#7aa2f7,color:#3b5998
+    style E fill:#e8f0fe,stroke:#7aa2f7,color:#3b5998
+    style S fill:#e8f0fe,stroke:#7aa2f7,color:#3b5998
+    style D fill:#edf7ef,stroke:#9ece6a,color:#2d6a2e
+    style RE fill:#fdf4e7,stroke:#e0af68,color:#8a6914
+    style A fill:#4a6670,stroke:#4a6670,color:#fff
 ```
 
 ### Router
