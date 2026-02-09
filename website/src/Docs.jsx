@@ -171,6 +171,9 @@ print(result.answer)`}</Code>
         <section id="built-in-tools">
           <h1>Built-in Tools</h1>
           <p>OnsetLab ships with five tools that cover common use cases out of the box.</p>
+          <p className="docs-note" style={{ fontSize: '0.9em', marginTop: '0.5em', opacity: 0.8 }}>
+            More tools will be added over time.
+          </p>
 
           <div className="docs-table-wrap">
             <table className="docs-table">

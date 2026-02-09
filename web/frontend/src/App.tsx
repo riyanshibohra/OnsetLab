@@ -323,26 +323,31 @@ function App() {
                     <span style={{ fontSize: '10px' }}>{openSections.tools ? '▾' : '▸'}</span>
                   </button>
                   {openSections.tools && (
-                    <div className="space-y-0.5">
-                      {tools.map(tool => (
-                        <label
-                          key={tool.name}
-                          className="flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer transition-colors"
-                          style={{ 
-                            background: selectedTools.includes(tool.name) ? 'rgba(74, 102, 112, 0.08)' : 'transparent'
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedTools.includes(tool.name)}
-                            onChange={() => toggleTool(tool.name)}
-                          />
-                          <span className="text-sm" style={{ color: 'var(--text)' }}>
-                            {tool.name}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
+                    <>
+                      <div className="space-y-0.5">
+                        {tools.map(tool => (
+                          <label
+                            key={tool.name}
+                            className="flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer transition-colors"
+                            style={{ 
+                              background: selectedTools.includes(tool.name) ? 'rgba(74, 102, 112, 0.08)' : 'transparent'
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedTools.includes(tool.name)}
+                              onChange={() => toggleTool(tool.name)}
+                            />
+                            <span className="text-sm" style={{ color: 'var(--text)' }}>
+                              {tool.name}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      <p className="text-[10px] mt-2 px-2" style={{ color: 'var(--text-secondary)', opacity: 0.7 }}>
+                        More tools coming soon
+                      </p>
+                    </>
                   )}
                 </div>
 
@@ -477,7 +482,7 @@ function App() {
                     <div className="h-full flex flex-col items-center justify-center text-center py-12">
                       <pre
                         className="leading-tight mb-4"
-                        style={{ color: 'var(--accent)', fontSize: '6px', opacity: 0.35 }}
+                        style={{ color: 'var(--accent)', fontSize: '6px', opacity: 0.9 }}
                       >
 {`
  ██████╗ ███╗   ██╗███████╗███████╗████████╗██╗      █████╗ ██████╗ 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { GitBranch, Plug, RefreshCcw, Cpu, ArrowRight, Copy, Check, BookOpen, Layers, Zap, CheckCircle, Star } from 'lucide-react'
+import { GitBranch, Plug, RefreshCcw, Cpu, ArrowRight, Copy, Check, BookOpen, Layers, Zap, CheckCircle, Star, Package, Play } from 'lucide-react'
 
 const FadeIn = ({ children, delay = 0, className = '' }) => (
   <motion.div
@@ -26,9 +26,13 @@ const ASCII_ART = `
 const CODE_LINES = [
   { tokens: [{ text: 'from ', cls: '' }, { text: 'onsetlab', cls: 't-str' }, { text: ' import ', cls: '' }, { text: 'Agent', cls: 't-kw' }] },
   { tokens: [] },
-  { tokens: [{ text: 'agent = ', cls: '' }, { text: 'Agent', cls: 't-kw' }, { text: '(', cls: '' }, { text: '"qwen3-1.7b"', cls: 't-str' }, { text: ', tools=[', cls: '' }, { text: '"Calculator"', cls: 't-str' }, { text: ', ', cls: '' }, { text: '"DateTime"', cls: 't-str' }, { text: '])', cls: '' }] },
-  { tokens: [{ text: 'agent.', cls: '' }, { text: 'connect_mcp', cls: 't-kw' }, { text: '(', cls: '' }, { text: '"github"', cls: 't-str' }, { text: ', token=', cls: '' }, { text: '"..."', cls: 't-str' }, { text: ')', cls: '' }] },
-  { tokens: [{ text: 'result = agent.', cls: '' }, { text: 'run', cls: 't-kw' }, { text: '(', cls: '' }, { text: '"Summarize my team\'s PRs this week"', cls: 't-str' }, { text: ')', cls: '' }] },
+  { tokens: [{ text: 'agent ', cls: '' }, { text: '= ', cls: '' }, { text: 'Agent', cls: 't-kw' }, { text: '(', cls: '' }] },
+  { tokens: [{ text: '    model', cls: '' }, { text: '=', cls: '' }, { text: '"qwen3-1.7b"', cls: 't-str' }, { text: ',', cls: '' }] },
+  { tokens: [{ text: '    tools', cls: '' }, { text: '=', cls: '' }, { text: '[', cls: '' }, { text: '"Calculator"', cls: 't-str' }, { text: ', ', cls: '' }, { text: '"DateTime"', cls: 't-str' }, { text: ']', cls: '' }] },
+  { tokens: [{ text: ')', cls: '' }] },
+  { tokens: [] },
+  { tokens: [{ text: 'agent.', cls: '' }, { text: 'connect_mcp', cls: 't-kw' }, { text: '(', cls: '' }, { text: '"github"', cls: 't-str' }, { text: ', token', cls: '' }, { text: '=', cls: '' }, { text: '"..."', cls: 't-str' }, { text: ')', cls: '' }] },
+  { tokens: [{ text: 'result ', cls: '' }, { text: '= ', cls: '' }, { text: 'agent.', cls: '' }, { text: 'run', cls: 't-kw' }, { text: '(', cls: '' }, { text: '"Summarize my PRs"', cls: 't-str' }, { text: ')', cls: '' }] },
 ]
 
 function CodeSnippet() {
@@ -224,10 +228,21 @@ function Hero() {
             </FadeIn>
 
             <FadeIn delay={0.35}>
-              <p className="text-xs mt-4" style={{ color: 'var(--text-secondary)', opacity: 0.6 }}>
-                Works with Qwen, Mistral, Hermes, Gemma
-                <br />
-                and any Ollama-compatible model.
+              <div style={{ display: 'flex', gap: '10px', width: '100%' }}>
+                <a href="https://pypi.org/project/onsetlab/" className="btn btn-secondary" style={{ gap: '6px', flex: 1, justifyContent: 'center' }} target="_blank" rel="noopener noreferrer">
+                  <Package size={15} />
+                  PyPI
+                </a>
+                <a href="/playground" className="btn btn-secondary" style={{ gap: '6px', flex: 1, justifyContent: 'center' }}>
+                  <Play size={15} />
+                  Try Playground
+                </a>
+              </div>
+            </FadeIn>
+
+            <FadeIn delay={0.4}>
+              <p className="text-xs mt-3" style={{ color: 'var(--text-secondary)', opacity: 0.6 }}>
+                Qwen, Mistral, Hermes, Gemma + any Ollama model
               </p>
             </FadeIn>
           </div>
@@ -252,7 +267,7 @@ function Features() {
     {
       Icon: Plug,
       title: 'MCP Servers',
-      desc: 'GitHub, Slack, Notion, filesystem, web search — connect any MCP server with a single line of config.',
+      desc: 'GitHub, Slack, Notion, filesystem, web search - connect any MCP server with a single line of config.',
       accent: '#9ece6a',
     },
     {
@@ -264,7 +279,7 @@ function Features() {
     {
       Icon: Cpu,
       title: 'Any Ollama Model',
-      desc: 'Qwen, Mistral, Hermes, Gemma — use whatever fits your hardware. No API keys, no cloud dependency.',
+      desc: 'Qwen, Mistral, Hermes, Gemma - use whatever fits your hardware. No API keys, no cloud dependency.',
       accent: 'var(--accent)',
     },
   ]
@@ -272,6 +287,11 @@ function Features() {
   return (
     <section id="features" className="py-24 px-6">
       <div className="max-w-5xl mx-auto">
+        <FadeIn>
+          <h2 className="text-2xl font-medium text-center mb-12" style={{ color: 'var(--text)' }}>
+            What makes it different
+          </h2>
+        </FadeIn>
         <div className="grid md:grid-cols-2 gap-5">
           {features.map((f, i) => (
             <FadeIn key={i} delay={i * 0.08}>
@@ -292,6 +312,35 @@ function Features() {
   )
 }
 
+function Demo() {
+  return (
+    <section className="py-24 px-6">
+      <div className="max-w-4xl mx-auto">
+        <FadeIn>
+          <h2 className="text-2xl font-medium text-center mb-4" style={{ color: 'var(--text)' }}>
+            See it in action
+          </h2>
+          <p className="text-sm text-center mb-12" style={{ color: 'var(--text-secondary)', opacity: 0.7 }}>
+            Watch how OnsetLab handles real queries from start to finish
+          </p>
+        </FadeIn>
+
+        <FadeIn delay={0.1}>
+          <div className="video-container">
+            <iframe
+              src="https://www.youtube.com/embed/dQw4w9WgXcQ"
+              title="OnsetLab Demo"
+              frameBorder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
+          </div>
+        </FadeIn>
+      </div>
+    </section>
+  )
+}
+
 function GetStarted() {
   return (
     <section id="start" className="py-24 px-6">
@@ -301,7 +350,7 @@ function GetStarted() {
             From install to deploy
           </h2>
           <p className="text-sm mb-12" style={{ color: 'var(--text-secondary)' }}>
-            Build your agent, connect your tools, ship it anywhere.
+            Four simple steps to ship your agent.
           </p>
         </FadeIn>
 
@@ -310,7 +359,7 @@ function GetStarted() {
             <div className="journey-step">
               <span className="step-number">1</span>
               <h3 className="text-sm font-medium mb-1">Install</h3>
-              <code className="text-xs" style={{ color: 'var(--accent)' }}>pip install onsetlab</code>
+              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>pip install onsetlab</p>
             </div>
 
             <ArrowRight size={18} className="journey-arrow" style={{ color: 'var(--border)' }} />
@@ -326,7 +375,7 @@ function GetStarted() {
             <div className="journey-step">
               <span className="step-number">3</span>
               <h3 className="text-sm font-medium mb-1">Run</h3>
-              <code className="text-xs" style={{ color: 'var(--accent)' }}>agent.run("your task")</code>
+              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>agent.run("your task")</p>
             </div>
 
             <ArrowRight size={18} className="journey-arrow" style={{ color: 'var(--border)' }} />
@@ -339,10 +388,15 @@ function GetStarted() {
           </div>
         </FadeIn>
 
-        <FadeIn delay={0.2}>
-          <div className="flex gap-3 justify-center mt-14">
-            <a href="/playground" className="btn btn-primary">Try the Playground</a>
-            <a href="/docs" className="btn btn-secondary">Documentation</a>
+        <FadeIn delay={0.25}>
+          <div className="mt-16">
+            <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
+              Ready to build?
+            </p>
+            <a href="/docs" className="btn btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+              Get Started
+              <ArrowRight size={16} />
+            </a>
           </div>
         </FadeIn>
       </div>
@@ -377,6 +431,8 @@ function App() {
       <Nav />
       <Hero />
       <Features />
+      <div style={{ height: '1px', background: 'var(--border)', maxWidth: '72rem', margin: '0 auto' }} />
+      <Demo />
       <div style={{ height: '1px', background: 'var(--border)', maxWidth: '72rem', margin: '0 auto' }} />
       <GetStarted />
       <Footer />
