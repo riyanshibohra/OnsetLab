@@ -69,13 +69,13 @@ The agent routes the query, builds an execution plan, calls the calculator, and 
 flowchart TD
     Q["🔍 Query"] --> R["Router (model-driven)"]
 
-    R -->|"no tools needed"| D["DIRECT — answer from model knowledge"]
-    R -->|"tools needed"| P["Planner — THINK → PLAN"]
+    R -->|"no tools needed"| D["DIRECT - answer from model knowledge"]
+    R -->|"tools needed"| P["Planner - THINK → PLAN"]
 
-    P --> E["Executor — run tools, resolve dependencies"]
-    E --> S["Solver — synthesize final answer"]
+    P --> E["Executor - run tools, resolve dependencies"]
+    E --> S["Solver - synthesize final answer"]
 
-    P -. "plan fails" .-> RE["ReAct Fallback — think → act → observe"]
+    P -. "plan fails" .-> RE["ReAct Fallback - think → act → observe"]
 
     D --> A["✅ Answer"]
     S --> A
@@ -163,6 +163,8 @@ agent.add_mcp_server(server)
 | `UnitConverter` | Length, weight, temperature, volume, speed, data |
 | `TextProcessor` | Word count, find/replace, case transforms, pattern extraction |
 | `RandomGenerator` | Random numbers, UUIDs, passwords, dice rolls, coin flips |
+
+> More tools will be added over time.
 
 ## Tested Models
 
