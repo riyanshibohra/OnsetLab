@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { api, ApiError } from './api/client';
-import type { Message, ToolInfo, ModelInfo, MCPServerInfo } from './types';
+import type { Message, ToolInfo, MCPServerInfo } from './types';
 
 // Default data (fallback if API fails)
 const DEFAULT_TOOLS: ToolInfo[] = [
@@ -11,14 +11,6 @@ const DEFAULT_TOOLS: ToolInfo[] = [
   { name: 'RandomGenerator', description: 'Random values', enabled_by_default: true, category: 'builtin' },
 ];
 
-const DEFAULT_MODELS: ModelInfo[] = [
-  { id: 'qwen3-a3b', display_name: 'Qwen3 A3B', description: 'Best for tool calling — MoE', params: '3B active', badge: 'recommended' },
-  { id: 'qwen2.5:7b', display_name: 'Qwen 2.5 7B', description: 'Strong all-rounder', params: '7B', badge: 'best value' },
-  { id: 'hermes3:8b', display_name: 'Hermes 3 8B', description: 'Excellent function calling', params: '8B', badge: 'function calling' },
-  { id: 'mistral:7b', display_name: 'Mistral 7B', description: 'Fast, reliable', params: '7B', badge: 'fastest' },
-  { id: 'gemma3:4b', display_name: 'Gemma 3 4B', description: 'Smallest, simple tasks', params: '4B' },
-  { id: 'qwen2.5-coder:7b', display_name: 'Qwen 2.5 Coder 7B', description: 'Optimized for code', params: '7B', badge: 'code' },
-];
 
 const DEFAULT_MCP_SERVERS: MCPServerInfo[] = [
   { name: 'GitHub', description: 'Issues, PRs, repos', registry_key: 'github', requires_token: true, token_label: 'Personal Access Token', setup_url: 'https://github.com/settings/tokens', token_hint: 'ghp_... with repo scope' },
@@ -44,18 +36,16 @@ function App() {
   const [isRateLimited, setIsRateLimited] = useState(false);
   
   const [tools] = useState<ToolInfo[]>(DEFAULT_TOOLS);
-  const [models] = useState<ModelInfo[]>(DEFAULT_MODELS);
   const [mcpServers] = useState<MCPServerInfo[]>(DEFAULT_MCP_SERVERS);
   const [selectedTools, setSelectedTools] = useState<string[]>(
     DEFAULT_TOOLS.filter(t => t.enabled_by_default).map(t => t.name)
   );
-  const [selectedModel, setSelectedModel] = useState('qwen3-a3b');
+  const selectedModel = 'qwen3-a3b';
 
   // Sidebar collapsible sections
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     tools: true,
     mcp: true,
-    model: false,
     export: true,
   });
 
@@ -309,7 +299,9 @@ function App() {
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-secondary btn-sm"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
             >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
               GitHub
             </a>
           </div>
@@ -323,15 +315,15 @@ function App() {
           <div className="flex gap-6 flex-1" style={{ minHeight: 0 }}>
             {/* Sidebar */}
             <aside className="w-64 shrink-0 flex flex-col" style={{ minHeight: 0 }}>
-              <div className="card flex-1" style={{ overflowY: 'auto', padding: '20px' }}>
+              <div className="card flex-1" style={{ overflowY: 'auto', padding: '16px 18px' }}>
                 {/* Tools */}
-                <div className="mb-4">
+                <div className="mb-3">
                   <button onClick={() => toggleSidebar('tools')} className="section-label flex items-center justify-between w-full" style={{ cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
                     <span>Built-in Tools</span>
                     <span style={{ fontSize: '10px' }}>{openSections.tools ? '▾' : '▸'}</span>
                   </button>
                   {openSections.tools && (
-                    <div className="space-y-1">
+                    <div className="space-y-0.5">
                       {tools.map(tool => (
                         <label
                           key={tool.name}
@@ -355,7 +347,7 @@ function App() {
                 </div>
 
                 {/* MCP Servers */}
-                <div className="mb-4">
+                <div className="mb-3">
                   <button onClick={() => toggleSidebar('mcp')} className="section-label flex items-center justify-between w-full" style={{ cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
                     <span className="flex items-center gap-2">
                       MCP Servers
@@ -367,7 +359,7 @@ function App() {
                     </span>
                     <span style={{ fontSize: '10px' }}>{openSections.mcp ? '▾' : '▸'}</span>
                   </button>
-                  {openSections.mcp && <div className="space-y-1.5">
+                  {openSections.mcp && <div className="space-y-0.5">
                     {mcpServers.map(server => {
                       const conn = mcpConnections[server.registry_key];
                       const isConnected = conn?.connected;
@@ -422,51 +414,14 @@ function App() {
                 <div style={{ height: '1px', background: 'var(--border)', margin: '12px 0' }} />
 
                 {/* Model */}
-                <div className="mb-4">
-                  <button onClick={() => toggleSidebar('model')} className="section-label flex items-center justify-between w-full" style={{ cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
-                    <span>Model</span>
-                    <span style={{ fontSize: '10px' }}>{openSections.model ? '▾' : '▸'}</span>
-                  </button>
-                  {openSections.model && <><div className="space-y-1">
-                    {models.map(m => (
-                      <button
-                        key={m.id}
-                        onClick={() => setSelectedModel(m.id)}
-                        className="w-full text-left px-3 py-2 rounded text-xs transition-colors cursor-pointer"
-                        style={{
-                          background: selectedModel === m.id ? 'rgba(74, 102, 112, 0.12)' : 'transparent',
-                          border: selectedModel === m.id ? '1px solid var(--accent)' : '1px solid transparent',
-                          color: selectedModel === m.id ? 'var(--text)' : 'var(--text-secondary)',
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium" style={{ color: selectedModel === m.id ? 'var(--text-primary)' : 'var(--text-primary)' }}>
-                            {m.display_name}
-                          </span>
-                          <span className="opacity-50">{m.params}</span>
-                          {m.badge && (
-                            <span
-                              className="ml-auto text-[9px] font-mono px-1.5 py-0.5 rounded"
-                              style={{
-                                background: m.badge === 'recommended'
-                                  ? 'rgba(74, 124, 89, 0.2)'
-                                  : 'rgba(255,255,255,0.06)',
-                                color: m.badge === 'recommended'
-                                  ? 'var(--success)'
-                                  : 'var(--text-secondary)',
-                              }}
-                            >
-                              {m.badge}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10px] mt-0.5 opacity-60">{m.description}</div>
-                      </button>
-                    ))}
+                <div className="mb-3">
+                  <div className="section-label" style={{ padding: 0 }}>Model</div>
+                  <div className="flex items-center gap-2 px-2 py-1.5 rounded text-sm" style={{ background: 'rgba(74, 102, 112, 0.08)' }}>
+                    <span style={{ color: 'var(--text)' }} className="font-medium">Qwen3 A3B</span>
+                    <span className="opacity-50 text-xs">3B</span>
+                    <span className="ml-auto text-[9px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(74, 124, 89, 0.2)', color: 'var(--success)' }}>active</span>
                   </div>
-                  <div className="text-[11px] mt-1.5" style={{ color: 'var(--text-secondary)' }}>
-                    All FREE via OpenRouter
-                  </div></>}
+                  <div className="text-[10px] mt-1 px-2 opacity-50">MoE, best for tool calling. Free via OpenRouter</div>
                 </div>
 
                 {/* Export */}
@@ -591,7 +546,7 @@ function App() {
                                   <span style={{ color: msg.trace.router_decision === 'REWOO' ? 'var(--accent)' : 'var(--success)' }}>
                                     {msg.trace.router_decision}
                                   </span>
-                                  <span style={{ color: 'var(--text-secondary)' }}> — {msg.trace.router_reason}</span>
+                                  <span style={{ color: 'var(--text-secondary)' }}> - {msg.trace.router_reason}</span>
                                 </div>
 
                                 {/* Tools */}
@@ -602,7 +557,7 @@ function App() {
                                       {msg.trace.tools_filtered} of {msg.trace.tools_total} selected
                                     </span>
                                     <span style={{ color: 'var(--text-secondary)' }}>
-                                      {' — '}{msg.trace.tools_selected.slice(0, 5).join(', ')}
+                                      {' - '}{msg.trace.tools_selected.slice(0, 5).join(', ')}
                                       {msg.trace.tools_selected.length > 5 ? ` +${msg.trace.tools_selected.length - 5}` : ''}
                                     </span>
                                   </div>
@@ -674,29 +629,6 @@ function App() {
                               {renderMarkdown(msg.content)}
                             </p>
                             
-                            {/* Execution Plan (compact, always visible) */}
-                            {msg.plan && msg.plan.length > 0 && !expandedTraces.has(msg.id) && (
-                              <div 
-                                className="mt-3 pt-3"
-                                style={{ borderTop: '1px solid var(--border)' }}
-                              >
-                                <div className="space-y-1.5">
-                                  {msg.plan.map(step => (
-                                    <div 
-                                      key={step.id} 
-                                      className="font-mono text-xs flex items-start gap-2"
-                                    >
-                                      <span style={{ color: 'var(--text-secondary)' }}>{step.id}</span>
-                                      <span style={{ color: 'var(--accent)' }}>{step.tool}</span>
-                                      <span style={{ color: 'var(--text-secondary)' }}>→</span>
-                                      <span className="break-all" style={{ color: step.status === 'error' ? 'var(--error)' : 'var(--success)' }}>
-                                        {step.result && step.result.length > 120 ? step.result.slice(0, 120) + '…' : step.result}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
                           </div>
                         </div>
                       ))}
@@ -757,7 +689,7 @@ function App() {
                       type="text"
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
-                      placeholder={isRateLimited ? "Limit reached — download the SDK" : "Type your question..."}
+                      placeholder={isRateLimited ? "Limit reached - download the SDK" : "Type your question..."}
                       disabled={isRateLimited || isLoading}
                       style={{ flex: 1 }}
                     />
@@ -807,7 +739,7 @@ function App() {
                   {pipelineTrace && (
                     <div className="pipeline-detail">
                       <div className="pipeline-detail-label">Decision</div>
-                      {pipelineTrace.router_decision}{pipelineTrace.router_reason ? ` — ${pipelineTrace.router_reason}` : ''}
+                      {pipelineTrace.router_decision}{pipelineTrace.router_reason ? ` - ${pipelineTrace.router_reason}` : ''}
                       {pipelineTrace.tools_selected && pipelineTrace.tools_selected.length > 0 && (
                         <>
                           {'\n'}
@@ -930,7 +862,7 @@ function App() {
 
             <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
               {tokenModal.description}. Paste your {tokenModal.token_label || 'token'} below.
-              {' '}Token is stored in memory only — never saved.
+              {' '}Token is stored in memory only, never saved.
             </p>
 
             <div className="mb-3">
@@ -1022,9 +954,15 @@ function App() {
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-primary"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
             >
-              View on GitHub
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+              Star on GitHub
             </a>
+            
+            <p className="text-xs mt-4" style={{ color: 'var(--text-secondary)', opacity: 0.7 }}>
+              If you found this useful, a star really helps!
+            </p>
           </div>
         </div>
       )}
@@ -1039,7 +977,8 @@ function App() {
             onsetlab · Open source
           </span>
           <div className="flex items-center gap-6" style={{ color: 'var(--text-secondary)' }}>
-            <a href="https://github.com/riyanshibohra/OnsetLab" className="hover:opacity-70 transition">
+            <a href="https://github.com/riyanshibohra/OnsetLab" className="hover:opacity-70 transition" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
               GitHub
             </a>
             <a href="https://github.com/riyanshibohra/OnsetLab#readme" className="hover:opacity-70 transition">
