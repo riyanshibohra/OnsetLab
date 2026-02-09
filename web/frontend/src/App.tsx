@@ -51,6 +51,18 @@ function App() {
   );
   const [selectedModel, setSelectedModel] = useState('qwen3-a3b');
 
+  // Sidebar collapsible sections
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
+    tools: true,
+    mcp: true,
+    model: false,
+    export: false,
+  });
+
+  const toggleSidebar = (key: string) => {
+    setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
   // Pipeline trace expansion state
   const [expandedTraces, setExpandedTraces] = useState<Set<string>>(new Set());
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
@@ -279,59 +291,57 @@ function App() {
       </nav>
 
       {/* Main Content */}
-      <main className="pt-20 pb-12 px-6">
-        <div className="max-w-5xl mx-auto">
-          {/* Header */}
-          <div className="py-8 mb-6">
-            <h1 className="text-2xl font-medium mb-2" style={{ color: 'var(--text)' }}>
-              Test the Agent
-            </h1>
-            <p style={{ color: 'var(--text-secondary)' }}>
-              Try tool-calling with local SLMs. {requestsRemaining} free requests, then download the SDK.
-            </p>
-          </div>
-
+      <main className="pt-16 px-6" style={{ height: 'calc(100vh - 0px)', display: 'flex', flexDirection: 'column' }}>
+        <div className="max-w-5xl mx-auto w-full flex-1 flex flex-col" style={{ minHeight: 0 }}>
           {/* Layout */}
-          <div className="flex gap-6">
+          <div className="flex gap-6 flex-1" style={{ minHeight: 0, paddingTop: '12px' }}>
             {/* Sidebar */}
             <aside className="w-64 shrink-0">
               <div className="card sticky top-24" style={{ maxHeight: 'calc(100vh - 120px)', overflowY: 'auto', padding: '20px' }}>
                 {/* Tools */}
                 <div className="mb-4">
-                  <div className="section-label">Built-in Tools</div>
-                  <div className="space-y-1">
-                    {tools.map(tool => (
-                      <label
-                        key={tool.name}
-                        className="flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer transition-colors"
-                        style={{ 
-                          background: selectedTools.includes(tool.name) ? 'rgba(74, 102, 112, 0.08)' : 'transparent'
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedTools.includes(tool.name)}
-                          onChange={() => toggleTool(tool.name)}
-                        />
-                        <span className="text-sm" style={{ color: 'var(--text)' }}>
-                          {tool.name}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
+                  <button onClick={() => toggleSidebar('tools')} className="section-label flex items-center justify-between w-full" style={{ cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+                    <span>Built-in Tools</span>
+                    <span style={{ fontSize: '10px' }}>{openSections.tools ? '▾' : '▸'}</span>
+                  </button>
+                  {openSections.tools && (
+                    <div className="space-y-1">
+                      {tools.map(tool => (
+                        <label
+                          key={tool.name}
+                          className="flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer transition-colors"
+                          style={{ 
+                            background: selectedTools.includes(tool.name) ? 'rgba(74, 102, 112, 0.08)' : 'transparent'
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedTools.includes(tool.name)}
+                            onChange={() => toggleTool(tool.name)}
+                          />
+                          <span className="text-sm" style={{ color: 'var(--text)' }}>
+                            {tool.name}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* MCP Servers */}
                 <div className="mb-4">
-                  <div className="section-label flex items-center justify-between">
-                    <span>MCP Servers</span>
-                    {connectedMCPCount > 0 && (
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(74, 124, 89, 0.15)', color: 'var(--success)' }}>
-                        {connectedMCPCount} live
-                      </span>
-                    )}
-                  </div>
-                  <div className="space-y-1.5">
+                  <button onClick={() => toggleSidebar('mcp')} className="section-label flex items-center justify-between w-full" style={{ cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+                    <span className="flex items-center gap-2">
+                      MCP Servers
+                      {connectedMCPCount > 0 && (
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(74, 124, 89, 0.15)', color: 'var(--success)' }}>
+                          {connectedMCPCount} live
+                        </span>
+                      )}
+                    </span>
+                    <span style={{ fontSize: '10px' }}>{openSections.mcp ? '▾' : '▸'}</span>
+                  </button>
+                  {openSections.mcp && <div className="space-y-1.5">
                     {mcpServers.map(server => {
                       const conn = mcpConnections[server.registry_key];
                       const isConnected = conn?.connected;
@@ -380,15 +390,18 @@ function App() {
                         </div>
                       );
                     })}
-                  </div>
+                  </div>}
                 </div>
 
                 <div style={{ height: '1px', background: 'var(--border)', margin: '12px 0' }} />
 
                 {/* Model */}
                 <div className="mb-4">
-                  <div className="section-label">Model</div>
-                  <div className="space-y-1">
+                  <button onClick={() => toggleSidebar('model')} className="section-label flex items-center justify-between w-full" style={{ cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+                    <span>Model</span>
+                    <span style={{ fontSize: '10px' }}>{openSections.model ? '▾' : '▸'}</span>
+                  </button>
+                  {openSections.model && <><div className="space-y-1">
                     {models.map(m => (
                       <button
                         key={m.id}
@@ -427,13 +440,16 @@ function App() {
                   </div>
                   <div className="text-[11px] mt-1.5" style={{ color: 'var(--text-secondary)' }}>
                     All FREE via OpenRouter
-                  </div>
+                  </div></>}
                 </div>
 
                 {/* Export */}
                 <div>
-                  <div className="section-label">Export</div>
-                  <div className="flex flex-wrap gap-1">
+                  <button onClick={() => toggleSidebar('export')} className="section-label flex items-center justify-between w-full" style={{ cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+                    <span>Export</span>
+                    <span style={{ fontSize: '10px' }}>{openSections.export ? '▾' : '▸'}</span>
+                  </button>
+                  {openSections.export && <><div className="flex flex-wrap gap-1">
                     <button
                       onClick={() => handleExport('config')}
                       className="text-xs py-1.5 px-3 rounded sidebar-btn"
@@ -466,13 +482,13 @@ function App() {
                   </div>
                   <div className="text-[10px] mt-1" style={{ color: 'var(--text-secondary)' }}>
                     vLLM = GPU, 5-10x faster
-                  </div>
+                  </div></>}
                 </div>
               </div>
             </aside>
 
             {/* Chat Area */}
-            <div className="flex-1 flex flex-col min-h-[560px]">
+            <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
               <div className="card flex-1 flex flex-col overflow-hidden" style={{ padding: 0 }}>
                 {/* Messages */}
                 <div className="flex-1 overflow-y-auto p-6">
