@@ -1,8 +1,8 @@
 interface LimitModalProps {
-  onClose: () => void;
+  onClose?: () => void;
 }
 
-export function LimitModal({ onClose }: LimitModalProps) {
+export function LimitModal({ onClose: _onClose }: LimitModalProps) {
   const goHome = () => {
     window.location.href = '/';
   };
