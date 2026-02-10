@@ -52,7 +52,7 @@ The agent routes the query, builds an execution plan, calls the right tool, and 
 ## Architecture
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/riyanshibohra/OnsetLab/main/docs/architecture.png" alt="OnsetLab Architecture" width="600" />
+  <img src="https://raw.githubusercontent.com/riyanshibohra/OnsetLab/main/assets/architecture.png" alt="OnsetLab Architecture" width="600" />
 </p>
 
 The **Router** classifies queries as tool-needed or direct-answer using the model itself. The **Planner** generates structured `THINK -> PLAN` steps with auto-generated tool rules from JSON schemas. The **Executor** resolves dependencies and runs tools in order. If planning fails, the **ReAct Fallback** switches to iterative `Thought -> Action -> Observation` loops to recover.
