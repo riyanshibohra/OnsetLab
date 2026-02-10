@@ -1,3 +1,4 @@
 include LICENSE
 include README.md
+include PYPI_README.md
 recursive-include onsetlab/mcp/registry *.json
