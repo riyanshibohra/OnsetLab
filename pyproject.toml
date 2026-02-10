@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "onsetlab"
-version = "0.2.0"
+version = "0.2.1"
 description = "Reliable tool-calling agents on local SLMs. Hybrid REWOO/ReAct architecture, MCP support, one-command export. No API keys, no cloud."
 readme = "README.md"
 license = {text = "Apache-2.0"}

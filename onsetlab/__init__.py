@@ -4,7 +4,7 @@ OnsetLab - Reliable SLM agents with hybrid REWOO/ReAct strategy.
 Build, benchmark, and package local AI agents.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from .agent import Agent
 from .mcp import MCPServer
