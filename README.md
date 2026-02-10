@@ -23,7 +23,7 @@ OnsetLab makes 3B-7B models do reliable tool calling through a hybrid REWOO/ReAc
 
 ---
 
-https://github.com/user-attachments/assets/cf30084a-52fd-4f71-a64b-dbe98f1d9fe8
+https://github.com/user-attachments/assets/46a99c79-de91-4c29-b8f4-06a43f85957a
 
 ## Quick Start
 
