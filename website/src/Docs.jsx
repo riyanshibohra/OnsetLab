@@ -109,33 +109,29 @@ print(result.answer)`}</Code>
             execution, and error recovery. The model only does what it's good at: one step at a time.
           </p>
 
-          <div className="docs-flow">
-            <div className="docs-flow-row">
-              <div className="docs-flow-node docs-flow-start">Query</div>
-              <span className="docs-flow-arrow">&#x2192;</span>
-              <div className="docs-flow-node">Router</div>
-            </div>
-            <div className="docs-flow-branch">
-              <div className="docs-flow-path">
-                <span className="docs-flow-path-label">tools needed</span>
-                <span className="docs-flow-arrow">&#x2193;</span>
-                <div className="docs-flow-node">Planner</div>
-                <span className="docs-flow-arrow">&#x2193;</span>
-                <div className="docs-flow-node">Executor</div>
-                <span className="docs-flow-arrow">&#x2193;</span>
-                <div className="docs-flow-node">Solver</div>
-              </div>
-              <div className="docs-flow-path">
-                <span className="docs-flow-path-label">no tools</span>
-                <span className="docs-flow-arrow">&#x2193;</span>
-                <div className="docs-flow-node">Direct Answer</div>
-              </div>
-              <div className="docs-flow-path">
-                <span className="docs-flow-path-label">plan fails</span>
-                <span className="docs-flow-arrow">&#x2193;</span>
-                <div className="docs-flow-node docs-flow-fallback">ReAct Fallback</div>
-              </div>
-            </div>
+          <div className="arch-diagram">
+            <img
+              src={`https://mermaid.ink/svg/${btoa(`flowchart TD
+    Q["Query"] --> R["Router"]
+    R -->|"tools needed"| P["Planner"]
+    R -->|"no tools"| D["Direct Answer"]
+    P --> E["Executor"]
+    E --> S["Solver"]
+    P -. "plan fails" .-> RE["ReAct Fallback"]
+    D --> A["Answer"]
+    S --> A
+    RE --> A
+    style Q fill:#4a6670,stroke:#4a6670,color:#fff
+    style R fill:#fff,stroke:#4a6670,color:#2d3b40
+    style P fill:#e8f0fe,stroke:#7aa2f7,color:#3b5998
+    style E fill:#e8f0fe,stroke:#7aa2f7,color:#3b5998
+    style S fill:#e8f0fe,stroke:#7aa2f7,color:#3b5998
+    style D fill:#edf7ef,stroke:#9ece6a,color:#2d6a2e
+    style RE fill:#fdf4e7,stroke:#e0af68,color:#8a6914
+    style A fill:#4a6670,stroke:#4a6670,color:#fff`)}`}
+              alt="OnsetLab Architecture: Query → Router → Planner → Executor → Solver → Answer, with Direct Answer and ReAct Fallback branches"
+              style={{ width: '100%', maxWidth: '550px', display: 'block', margin: '0 auto' }}
+            />
           </div>
 
           <h3>Router</h3>
