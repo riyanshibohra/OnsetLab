@@ -328,7 +328,7 @@ function Demo() {
         <FadeIn delay={0.1}>
           <div className="video-container">
             <iframe
-              src="https://youtu.be/CbBE36r1I7M"
+              src="https://www.youtube.com/embed/CbBE36r1I7M"
               title="OnsetLab Demo"
               frameBorder="0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
