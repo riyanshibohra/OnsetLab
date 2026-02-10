@@ -2,7 +2,7 @@
 
 # OnsetLab
 
-### Reliable tool calling on local SLMs. No API keys, no cloud.
+### Tool-calling AI agents that run locally.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-3776AB.svg?logo=python&logoColor=white)](https://python.org)
