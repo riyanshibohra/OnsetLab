@@ -16,10 +16,11 @@ class OllamaModel(BaseModel):
     
     # Recommended models for tool-calling (tested)
     RECOMMENDED = {
-        "phi3.5": "Microsoft Phi-3.5 (3.8B) - Best balance of speed/quality",
+        "phi3.5": "Microsoft Phi-3.5 (3.8B) - Default, good balance of speed/quality",
         "qwen2.5:3b": "Alibaba Qwen 2.5 (3B) - Fast, good instruction following",
+        "qwen2.5:7b": "Alibaba Qwen 2.5 (7B) - Strong tool calling, needs 8GB+ RAM",
+        "qwen3-a3b": "Alibaba Qwen 3 (MoE, 3B active/30B total) - Best tool calling, needs 16GB+ RAM",
         "llama3.2:3b": "Meta Llama 3.2 (3B) - Good general purpose",
-        "mistral:7b": "Mistral 7B - Higher quality, slower",
     }
     
     @classmethod

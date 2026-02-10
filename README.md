@@ -9,7 +9,7 @@
 [![PyPI](https://img.shields.io/pypi/v/onsetlab.svg)](https://pypi.org/project/onsetlab/)
 [![Ollama](https://img.shields.io/badge/Runs%20on-Ollama-000000.svg)](https://ollama.com)
 
-[Install](#install) · [Quick Start](#quick-start) · [Architecture](#architecture) · [MCP Servers](#mcp-servers)
+[Install](#install) · [Quick Start](#quick-start) · [Architecture](#architecture) · [MCP Servers](#mcp-servers) · [CLI](#cli) · [Export & Deploy](#export--deploy)
 
 </div>
 
@@ -44,7 +44,7 @@ pip install onsetlab
 Requires [Ollama](https://ollama.com) running locally:
 
 ```bash
-ollama pull qwen2.5:7b
+ollama pull phi3.5
 ```
 
 ## Quick Start
@@ -53,7 +53,7 @@ ollama pull qwen2.5:7b
 from onsetlab import Agent
 from onsetlab.tools import Calculator, DateTime
 
-agent = Agent("qwen2.5:7b", tools=[Calculator(), DateTime()])
+agent = Agent("phi3.5", tools=[Calculator(), DateTime()])
 
 result = agent.run("What's 15% tip on $84.50?")
 print(result.answer)
@@ -120,7 +120,7 @@ from onsetlab import Agent, MCPServer
 
 server = MCPServer.from_registry("filesystem", extra_args=["/path/to/dir"])
 
-agent = Agent("qwen2.5:7b")
+agent = Agent("phi3.5")
 agent.add_mcp_server(server)
 
 result = agent.run("List all Python files in the directory")
@@ -166,22 +166,77 @@ agent.add_mcp_server(server)
 
 > More tools will be added over time.
 
+## CLI
+
+OnsetLab includes a command-line interface for interactive chat, benchmarking, and exporting.
+
+```bash
+# Interactive chat
+python -m onsetlab
+python -m onsetlab --model qwen2.5:7b
+
+# Benchmark a model
+python -m onsetlab benchmark --model phi3.5
+python -m onsetlab benchmark --compare phi3.5,qwen2.5:7b --verbose
+
+# Export agent
+python -m onsetlab export --format docker -o ./my-agent
+python -m onsetlab export --format config -o agent.yaml
+python -m onsetlab export --format binary -o agent.py
+```
+
+## Export & Deploy
+
+Export your agent in multiple formats for deployment:
+
+| Format | What you get | Requirements |
+|--------|-------------|--------------|
+| **YAML** | Portable config file | None |
+| **Docker** | Dockerfile + compose with Ollama sidecar | Docker |
+| **vLLM** | Docker setup with GPU-accelerated inference | NVIDIA GPU + Docker |
+| **Script** | Standalone Python file | Ollama |
+
+```python
+# Export from code
+agent.export("config", "my_agent.yaml")
+agent.export("docker", "./deploy/")
+agent.export("binary", "agent.py")
+```
+
+## Benchmark
+
+Validate that a model handles tool calling correctly before deploying.
+
+```bash
+python -m onsetlab benchmark --model phi3.5 --verbose
+```
+
+```python
+from onsetlab import Benchmark
+
+result = Benchmark.run(model="phi3.5", verbose=True)
+result.print_summary()
+```
+
+Tests tool selection (does the model pick the right tool?) and parameter extraction (does it fill in the right values?) across the built-in tools.
+
 ## Tested Models
 
-| Model | Size | Notes |
-|-------|------|-------|
-| `qwen2.5:7b` | 7B | Best results for tool calling |
-| `qwen2.5:3b` | 3B | Fast, good for simple tasks |
-| `phi3.5` | 3.8B | Solid balance of speed and quality |
-| `llama3.2:3b` | 3B | General purpose |
+| Model | Size | RAM needed | Notes |
+|-------|------|-----------|-------|
+| `phi3.5` | 3.8B | 4GB+ | Default. Good balance of speed and quality |
+| `qwen2.5:3b` | 3B | 4GB+ | Fast, good for simple tasks |
+| `qwen2.5:7b` | 7B | 8GB+ | Strong tool calling |
+| `qwen3-a3b` | MoE (3B active / 30B total) | 16GB+ | Best tool calling accuracy |
+| `llama3.2:3b` | 3B | 4GB+ | General purpose |
 
-Works with any model available through Ollama.
+Works with any model available through Ollama. Use `python -m onsetlab benchmark --model your-model` to verify compatibility.
 
 ## Configuration
 
 ```python
 agent = Agent(
-    model="qwen2.5:7b",       # any Ollama model
+    model="phi3.5",            # any Ollama model
     tools=[...],               # built-in tools
     memory=True,               # conversation memory
     verify=True,               # pre-execution plan verification

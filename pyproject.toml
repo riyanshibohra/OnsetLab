@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "onsetlab"
-version = "0.1.1"
-description = "Build, benchmark, and package local SLM agents. No API keys, no cloud."
+version = "0.2.0"
+description = "Reliable tool-calling agents on local SLMs. Hybrid REWOO/ReAct architecture, MCP support, one-command export. No API keys, no cloud."
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
@@ -76,7 +76,7 @@ where = ["."]
 include = ["onsetlab*"]
 
 [tool.setuptools.package-data]
-onsetlab = ["py.typed", "mcp/registry/*.json"]
+onsetlab = ["py.typed", "mcp/registry/*.json", "benchmark/tests/*.json"]
 
 # Ruff configuration (linter)
 [tool.ruff]

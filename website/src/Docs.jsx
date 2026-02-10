@@ -87,13 +87,13 @@ export default function Docs() {
             OnsetLab uses <a href="https://ollama.com" target="_blank" rel="noopener noreferrer">Ollama</a> to
             run models locally. Install it, then pull a model:
           </p>
-          <Code lang="bash">ollama pull qwen3-a3b</Code>
+          <Code lang="bash">ollama pull phi3.5</Code>
 
           <h3>3. Create and run an agent</h3>
           <Code lang="python">{`from onsetlab import Agent
 from onsetlab.tools import Calculator, DateTime
 
-agent = Agent("qwen3-a3b", tools=[Calculator(), DateTime()])
+agent = Agent("phi3.5", tools=[Calculator(), DateTime()])
 
 result = agent.run("What's 15% tip on $84.50?")
 print(result.answer)`}</Code>
@@ -209,7 +209,7 @@ print(result.answer)`}</Code>
           <h3>Usage</h3>
           <Code lang="python">{`from onsetlab.tools import Calculator, DateTime, UnitConverter
 
-agent = Agent("qwen3-a3b", tools=[Calculator(), DateTime(), UnitConverter()])`}</Code>
+agent = Agent("phi3.5", tools=[Calculator(), DateTime(), UnitConverter()])`}</Code>
           <p>
             Each tool auto-generates its own JSON schema, which the planner uses to understand available
             functions and parameter types.
@@ -229,7 +229,7 @@ agent = Agent("qwen3-a3b", tools=[Calculator(), DateTime(), UnitConverter()])`}<
 
 server = MCPServer.from_registry("filesystem", extra_args=["/path/to/dir"])
 
-agent = Agent("qwen3-a3b")
+agent = Agent("phi3.5")
 agent.add_mcp_server(server)
 
 result = agent.run("List all Python files in the directory")
@@ -277,7 +277,7 @@ agent.add_mcp_server(server)`}</Code>
           <p>The <InlineCode>Agent</InlineCode> constructor accepts the following options:</p>
 
           <Code lang="python">{`agent = Agent(
-    model="qwen3-a3b",        # any Ollama model
+    model="phi3.5",            # any Ollama model
     tools=[...],               # built-in tools
     memory=True,               # conversation memory
     verify=True,               # pre-execution plan verification
@@ -299,7 +299,7 @@ agent.add_mcp_server(server)`}</Code>
                 <tr>
                   <td><InlineCode>model</InlineCode></td>
                   <td>required</td>
-                  <td>Ollama model name (e.g. "qwen3-a3b")</td>
+                  <td>Ollama model name (e.g. "phi3.5", "qwen2.5:7b")</td>
                 </tr>
                 <tr>
                   <td><InlineCode>tools</InlineCode></td>
@@ -558,42 +558,49 @@ Benchmark.print_comparison(results)`}</Code>
                 <tr>
                   <th>Model</th>
                   <th>Size</th>
+                  <th>RAM</th>
                   <th>Notes</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td><InlineCode>qwen3-a3b</InlineCode></td>
-                  <td>A3B (MoE)</td>
-                  <td>Recommended. Best for tool calling, fast inference</td>
-                </tr>
-                <tr>
-                  <td><InlineCode>qwen2.5:7b</InlineCode></td>
-                  <td>7B</td>
-                  <td>Strong tool calling, higher memory usage</td>
+                  <td><InlineCode>phi3.5</InlineCode></td>
+                  <td>3.8B</td>
+                  <td>4GB+</td>
+                  <td>Default. Good balance of speed and quality</td>
                 </tr>
                 <tr>
                   <td><InlineCode>qwen2.5:3b</InlineCode></td>
                   <td>3B</td>
+                  <td>4GB+</td>
                   <td>Fast, good for simple tasks</td>
                 </tr>
                 <tr>
-                  <td><InlineCode>phi3.5</InlineCode></td>
-                  <td>3.8B</td>
-                  <td>Solid balance of speed and quality</td>
+                  <td><InlineCode>qwen2.5:7b</InlineCode></td>
+                  <td>7B</td>
+                  <td>8GB+</td>
+                  <td>Strong tool calling</td>
+                </tr>
+                <tr>
+                  <td><InlineCode>qwen3-a3b</InlineCode></td>
+                  <td>MoE (3B active / 30B total)</td>
+                  <td>16GB+</td>
+                  <td>Best tool calling accuracy</td>
                 </tr>
                 <tr>
                   <td><InlineCode>llama3.2:3b</InlineCode></td>
                   <td>3B</td>
-                  <td>General purpose, may struggle with complex plans</td>
+                  <td>4GB+</td>
+                  <td>General purpose</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
           <p className="docs-note">
-            For best results, we recommend <InlineCode>qwen3-a3b</InlineCode>. You can verify any model's
-            compatibility by running <InlineCode>python -m onsetlab benchmark --model your-model</InlineCode>.
+            The default is <InlineCode>phi3.5</InlineCode>, which runs on most hardware. For stronger tool calling,
+            use <InlineCode>qwen2.5:7b</InlineCode> (8GB+ RAM) or <InlineCode>qwen3-a3b</InlineCode> (16GB+ RAM).
+            Verify any model with <InlineCode>python -m onsetlab benchmark --model your-model</InlineCode>.
           </p>
         </section>
 
