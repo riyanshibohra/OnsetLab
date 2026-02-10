@@ -9,7 +9,7 @@
 [![PyPI](https://img.shields.io/pypi/v/onsetlab.svg)](https://pypi.org/project/onsetlab/)
 [![Ollama](https://img.shields.io/badge/Runs%20on-Ollama-000000.svg)](https://ollama.com)
 
-[Quick Start](#quick-start) · [Architecture](#architecture) · [MCP Servers](#mcp-servers) · [CLI](#cli) · [Models](#tested-models) · [Docs](https://onsetlab.com/docs)
+[Quick Start](#quick-start) · [Architecture](#architecture) · [MCP Servers](#mcp-servers) · [CLI](#cli) · [Models](#tested-models) · [Docs](https://onsetlab.app/docs)
 
 </div>
 
@@ -111,7 +111,7 @@ print(result.answer)
 agent.disconnect_mcp_servers()
 ```
 
-Any MCP server available via npm works too. See the [docs](https://onsetlab.com/docs#mcp-servers) for examples.
+Any MCP server available via npm works too. See the [docs](https://onsetlab.app/docs#mcp-servers) for examples.
 
 **Built-in registry:** `filesystem` · `github` · `slack` · `notion` · `google_calendar` · `tavily`
 
@@ -128,7 +128,7 @@ python -m onsetlab export --format docker -o ./my-agent      # export as Docker
 python -m onsetlab export --format config -o agent.yaml      # export as YAML
 ```
 
-Export formats: **YAML** (portable config), **Docker** (Dockerfile + compose + Ollama), **vLLM** (GPU-accelerated), **Script** (standalone .py file). See [Export & Deploy docs](https://onsetlab.com/docs#export-deploy) for details.
+Export formats: **YAML** (portable config), **Docker** (Dockerfile + compose + Ollama), **vLLM** (GPU-accelerated), **Script** (standalone .py file). See [Export & Deploy docs](https://onsetlab.app/docs#export-deploy) for details.
 
 ---
 
@@ -148,7 +148,7 @@ Works with any Ollama model. Run `python -m onsetlab benchmark --model your-mode
 
 <div align="center">
 
-[Website](https://onsetlab.com) · [Playground](https://onsetlab.com/playground) · [Documentation](https://onsetlab.com/docs) · [PyPI](https://pypi.org/project/onsetlab/)
+[Website](https://onsetlab.app) · [Playground](https://onsetlab.app/playground) · [Documentation](https://onsetlab.app/docs) · [PyPI](https://pypi.org/project/onsetlab/)
 
 Apache 2.0
 
