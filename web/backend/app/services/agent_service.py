@@ -14,8 +14,13 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
-# Add parent directory to path for importing onsetlab
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
+# Add project root to path for importing onsetlab SDK
+# Works both locally (4 levels up from services/) and in Docker (WORKDIR /app)
+_project_root = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..')
+sys.path.insert(0, os.path.abspath(_project_root))
+# Also add /app for Docker deployments where onsetlab is at /app/onsetlab/
+if os.path.isdir('/app/onsetlab'):
+    sys.path.insert(0, '/app')
 
 from onsetlab.tools import (
     Calculator,

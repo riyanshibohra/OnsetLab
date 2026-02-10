@@ -1,0 +1,47 @@
+# Node modules (re-installed in Docker via npm ci)
+**/node_modules/
+
+# Python caches
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Git
+.git/
+
+# Environment files
+**/.env
+**/.env.local
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing / artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.jsonl
+
+# Build artifacts already in static/ (will be rebuilt in Docker)
+web/backend/static/
+
+# Meta-agent (not needed for web deployment)
+meta_agent/
+
+# Training notebooks
+*.ipynb
+
+# Virtual environments
+venv/
+.venv/
+env/
+myvenv/

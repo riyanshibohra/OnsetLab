@@ -83,7 +83,7 @@ class Settings:
     # Same models run locally via Ollama
     LOCAL_MODELS_NOTE = "All run locally via Ollama too"
     
-    # Built-in Tools (all 6)
+    # Built-in Tools (all 5)
     TOOLS = [
         {
             "name": "Calculator",

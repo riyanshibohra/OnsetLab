@@ -21,6 +21,7 @@ myvenv/
 .env
 .env.local
 .env.*
+!.env.example
 
 # IDE
 .idea/
