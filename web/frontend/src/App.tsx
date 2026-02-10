@@ -926,8 +926,8 @@ function App() {
 
       {/* Rate Limit Modal */}
       {isRateLimited && (
-        <div className="modal-overlay">
-          <div className="modal-content">
+        <div className="modal-overlay" onClick={() => { window.location.href = '/'; }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-xl font-medium mb-2" style={{ color: 'var(--text)' }}>
               You've tried 5 requests!
             </h2>
@@ -968,6 +968,14 @@ function App() {
             <p className="text-xs mt-4" style={{ color: 'var(--text-secondary)', opacity: 0.7 }}>
               If you found this useful, a star really helps!
             </p>
+
+            <button
+              onClick={() => { window.location.href = '/'; }}
+              className="btn btn-secondary"
+              style={{ marginTop: '12px', width: '100%', cursor: 'pointer', fontSize: '14px' }}
+            >
+              ← Back to Home
+            </button>
           </div>
         </div>
       )}

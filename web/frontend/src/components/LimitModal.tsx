@@ -3,8 +3,12 @@ interface LimitModalProps {
 }
 
 export function LimitModal({ onClose }: LimitModalProps) {
+  const goHome = () => {
+    window.location.href = '/';
+  };
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={goHome}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">That's a wrap</div>
         <div className="modal-subtitle">
@@ -35,6 +39,19 @@ export function LimitModal({ onClose }: LimitModalProps) {
             📦 PyPI
           </a>
         </div>
+        <button
+          className="modal-link secondary"
+          onClick={goHome}
+          style={{
+            marginTop: '12px',
+            width: '100%',
+            cursor: 'pointer',
+            border: 'none',
+            fontSize: '14px',
+          }}
+        >
+          ← Back to Home
+        </button>
       </div>
     </div>
   );
