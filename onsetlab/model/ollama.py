@@ -1,6 +1,5 @@
 """Ollama model backend."""
 
-import json
 import subprocess
 from typing import List, Dict, Any, Optional
 
@@ -26,7 +25,6 @@ class OllamaModel(BaseModel):
     @classmethod
     def list_available(cls) -> list:
         """List models available in your local Ollama."""
-        import subprocess
         try:
             result = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:

@@ -11,7 +11,7 @@ The model itself decides whether tools are needed — no hardcoded regex pattern
 import re
 import logging
 from enum import Enum
-from typing import List, Optional
+from typing import List
 from dataclasses import dataclass
 
 from .tools.base import BaseTool
@@ -149,35 +149,3 @@ class Router:
                 reason=f"Router fallback (model error: {e})",
                 matched_tools=[],
             )
-
-
-def classify_task(
-    task: str,
-    model,
-    tools: List[BaseTool],
-    context: str = "",
-    debug: bool = False,
-) -> RoutingDecision:
-    """
-    Convenience function to classify a task.
-
-    Args:
-        task:    User's task/query.
-        model:   Model instance for classification.
-        tools:   Available tools.
-        context: Conversation history.
-        debug:   Print debug info.
-
-    Returns:
-        RoutingDecision
-    """
-    router = Router(model, tools, debug)
-    decision = router.route(task, context)
-
-    if debug:
-        print(f"\n[Router] Task: {task[:50]}...")
-        print(f"[Router] Strategy: {decision.strategy.value}")
-        print(f"[Router] Confidence: {decision.confidence:.0%}")
-        print(f"[Router] Reason: {decision.reason}")
-
-    return decision

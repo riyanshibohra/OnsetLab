@@ -15,7 +15,6 @@ from .tools import (
     UnitConverter,
     TextProcessor,
     RandomGenerator,
-    CodeExecutorTool,
 )
 from .benchmark import Benchmark
 from .router import Router, Strategy
@@ -38,7 +37,6 @@ __all__ = [
     "UnitConverter",
     "TextProcessor",
     "RandomGenerator",
-    "CodeExecutorTool",
     # Meta
     "__version__",
 ]

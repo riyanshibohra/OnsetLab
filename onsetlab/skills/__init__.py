@@ -14,7 +14,7 @@ Usage:
     plan = planner.plan(query, rules)    # SLM gets focused instructions
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 
 # ---------------------------------------------------------------------------
@@ -264,38 +264,9 @@ def _detect_hints(tools) -> str:
     return "\n".join(matched)
 
 
-# ---------------------------------------------------------------------------
-# Legacy compat — thin wrappers so old imports don't break
-# ---------------------------------------------------------------------------
-
-def detect_skill(tools) -> Optional[str]:
-    """Detect API type from tools (legacy compat)."""
-    names = " ".join(getattr(t, "name", "").lower() for t in tools)
-    for api_key in HINTS:
-        if api_key in names:
-            return api_key
-    return None
-
-
-def get_skill_context(skill_key: Optional[str]) -> str:
-    """Get hint text for a skill key (legacy compat)."""
-    if skill_key and skill_key in HINTS:
-        return HINTS[skill_key]
-    return ""
-
-
-def get_skill_for_query(query: str, tools) -> Optional[str]:
-    """Detect skill from query + tools (legacy compat)."""
-    return detect_skill(tools)
-
-
 # Public API
 __all__ = [
     "generate_tool_rules",
     "generate_examples",
     "HINTS",
-    # Legacy compat
-    "detect_skill",
-    "get_skill_context",
-    "get_skill_for_query",
 ]

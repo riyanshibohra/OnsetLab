@@ -16,16 +16,6 @@ Write a focused answer using ONLY the data above. Stay on topic. Stop when done.
 Answer:'''
 
 
-SOLVER_WITH_CONTEXT_PROMPT = '''Question: {task}
-
-Data:
-{results_summary}
-
-Write a focused answer using ONLY the data above. Stay on topic. Stop when done.
-
-Answer:'''
-
-
 CASUAL_PROMPT = '''Respond briefly to this casual message.
 
 Context:
@@ -62,17 +52,10 @@ class Solver:
         
         results_summary = self._format_results(plan, results)
         
-        if context:
-            prompt = SOLVER_WITH_CONTEXT_PROMPT.format(
-                context=context,
-                task=task,
-                results_summary=results_summary
-            )
-        else:
-            prompt = SOLVER_PROMPT.format(
-                task=task,
-                results_summary=results_summary
-            )
+        prompt = SOLVER_PROMPT.format(
+            task=task,
+            results_summary=results_summary
+        )
         
         response = self.model.generate(
             prompt,

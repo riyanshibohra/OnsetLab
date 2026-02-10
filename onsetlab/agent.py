@@ -10,9 +10,8 @@ The agent uses a hybrid approach:
 3. FALLBACK: If primary strategy fails, automatically try alternate
 """
 
-import re
 from typing import List, Dict, Any, Optional, Union
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
 from .model.base import BaseModel
@@ -433,25 +432,11 @@ Fix the parameters and try again with the SAME tool ({tool})."""
         # Generic conversational response
         return self._solver.solve(query, [], {}, context)
     
-    def chat(self, message: str) -> str:
-        """Interactive chat."""
-        return self.run(message).answer
-    
     def clear_memory(self):
         """Clear memory."""
         if self._memory is not None:
             self._memory.clear()
         self._last_results = {}
-    
-    def save_memory(self, path: str):
-        """Save memory."""
-        if self._memory is not None:
-            self._memory.save(path)
-    
-    def load_memory(self, path: str):
-        """Load memory."""
-        if self._memory is not None:
-            self._memory.load(path)
     
     def add_mcp_server(self, server: MCPServer) -> None:
         """

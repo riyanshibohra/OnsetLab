@@ -115,12 +115,6 @@ class Settings:
             "enabled_by_default": True,
             "category": "builtin",
         },
-        {
-            "name": "CodeExecutor",
-            "description": "Run Python/JS/Bash in sandbox",
-            "enabled_by_default": False,
-            "category": "builtin",
-        },
     ]
     
     # MCP Servers available in the playground

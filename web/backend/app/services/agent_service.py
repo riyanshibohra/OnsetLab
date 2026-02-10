@@ -23,7 +23,6 @@ from onsetlab.tools import (
     UnitConverter,
     TextProcessor,
     RandomGenerator,
-    CodeExecutorTool,
     BaseTool,
 )
 from onsetlab.rewoo.planner import Planner
@@ -111,7 +110,6 @@ TOOL_MAP = {
     "UnitConverter": UnitConverter,
     "TextProcessor": TextProcessor,
     "RandomGenerator": RandomGenerator,
-    "CodeExecutor": CodeExecutorTool,
 }
 
 ALL_TOOLS = list(TOOL_MAP.keys())

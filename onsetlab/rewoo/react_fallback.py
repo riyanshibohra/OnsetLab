@@ -60,7 +60,6 @@ class ReactFallback:
         # If context mentions a specific tool that failed, prioritize showing it
         focus_tool = None
         if context and "Tool used:" in context:
-            import re
             match = re.search(r'Tool used:\s*(\w+)', context)
             if match:
                 focus_tool = match.group(1)
