@@ -3,6 +3,7 @@
 Supports parallel execution of independent steps for faster completion.
 """
 
+import inspect
 import re
 import logging
 from typing import List, Dict, Any, Optional, Set
@@ -172,6 +173,9 @@ class Executor:
             # Normalize parameter names (handle camelCase/snake_case, typos)
             params = self._normalize_param_names(tool, params)
 
+            # Filter out params the tool doesn't accept (planner hallucinations)
+            params = self._filter_accepted_params(tool, params)
+
             result = tool.execute(**params)
             return str(result)
         except TypeError as e:
@@ -179,6 +183,39 @@ class Executor:
         except Exception as e:
             return f"Error: {str(e)}"
     
+    @staticmethod
+    def _filter_accepted_params(tool: BaseTool, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Drop any params that the tool's execute() method does not accept.
+
+        If the method already accepts **kwargs, all params pass through.
+        Otherwise only recognised parameter names are kept and unknown ones
+        are silently dropped (with a debug log).  This prevents crashes when
+        the planner hallucinates parameter names like 'range' or 'query'.
+        """
+        sig = inspect.signature(tool.execute)
+        has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in sig.parameters.values()
+        )
+        if has_var_keyword:
+            return params  # tool accepts anything
+
+        accepted = {
+            name for name, p in sig.parameters.items()
+            if p.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+        }
+        filtered = {}
+        for k, v in params.items():
+            if k in accepted:
+                filtered[k] = v
+            else:
+                logger.debug(f"Dropping unknown param '{k}' for {tool.name}")
+        return filtered
+
     def _map_positional_params(
         self,
         tool: BaseTool,

@@ -144,21 +144,23 @@ class DateTime(BaseTool):
             return f"Error: {str(e)}"
     
     def _get_now(self, timezone: str = None) -> str:
-        """Get current datetime."""
+        """Get current datetime. Always include day of week so the model does not refuse to interpret it."""
         now = datetime.now()
-        
+        day_name = calendar.day_name[now.weekday()]
+
         # Try to handle timezone if specified
         if timezone:
             try:
                 import zoneinfo
                 tz = zoneinfo.ZoneInfo(timezone)
                 now = datetime.now(tz)
-                return now.strftime(f"%Y-%m-%d %H:%M:%S ({timezone})")
+                day_name = calendar.day_name[now.weekday()]
+                return f"{day_name}, {now.strftime('%Y-%m-%d %H:%M:%S')} ({timezone})"
             except Exception:
                 # Fallback if timezone not available
                 pass
-        
-        return now.strftime("%Y-%m-%d %H:%M:%S")
+
+        return f"{day_name}, {now.strftime('%Y-%m-%d %H:%M:%S')}"
     
     def _get_day_of_week(self, date_str: str) -> str:
         """Get day of week for a date."""

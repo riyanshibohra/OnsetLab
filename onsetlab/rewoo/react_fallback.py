@@ -5,12 +5,16 @@ This is a silent fallback, not the primary execution mode.
 Only triggered when REWOO planning/execution fails.
 """
 
+import inspect
 import re
 import json
+import logging
 from typing import List, Dict, Any, Optional, Tuple
 
 from ..model.base import BaseModel
 from ..tools.base import BaseTool
+
+logger = logging.getLogger(__name__)
 
 
 REACT_PROMPT = '''Use ONE tool to complete the task.
@@ -358,10 +362,37 @@ class ReactFallback:
         
         try:
             tool = self.tools[tool_name]
+            # Filter out params the tool doesn't accept (planner hallucinations)
+            params = self._filter_accepted_params(tool, params)
             result = tool.execute(**params)
             return str(result)[:1000]  # Limit result size
         except Exception as e:
             return f"Error: {str(e)}"
+
+    @staticmethod
+    def _filter_accepted_params(tool: BaseTool, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Drop params that the tool's execute() does not accept."""
+        sig = inspect.signature(tool.execute)
+        has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in sig.parameters.values()
+        )
+        if has_var_keyword:
+            return params
+        accepted = {
+            name for name, p in sig.parameters.items()
+            if p.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+        }
+        filtered = {}
+        for k, v in params.items():
+            if k in accepted:
+                filtered[k] = v
+            else:
+                logger.debug(f"Dropping unknown param '{k}' for {tool.name}")
+        return filtered
     
     def _format_params(self, params: Dict[str, Any]) -> str:
         """Format params for display."""
