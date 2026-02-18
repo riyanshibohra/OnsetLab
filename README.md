@@ -11,7 +11,9 @@
 
 [Quick Start](#quick-start) · [Architecture](#architecture) · [MCP Servers](#mcp-servers) · [CLI](#cli) · [Models](#tested-models) · [Docs](https://onsetlab.app/docs)
 
+<a href="https://www.producthunt.com/products/onsetlab?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-onsetlab" target="_blank" rel="noopener noreferrer"><img alt="OnsetLab - Local tool-calling AI agents with SLMs | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1077408&amp;theme=neutral&amp;t=1771456295773"></a>
 </div>
+
 
 ---
 
